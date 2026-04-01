@@ -1,0 +1,1055 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; connect-src ws://localhost:*; media-src *;">
+  <title>ScreenShare Pro</title>
+  <link href="https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=Syne:wght@400;600;800&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg: #09090e;
+      --surface: #111118;
+      --surface2: #18181f;
+      --border: #2a2a3a;
+      --accent: #00e5ff;
+      --accent2: #bf5fff;
+      --accent3: #ff3d6e;
+      --text: #e8e8f0;
+      --text-dim: #6a6a80;
+      --green: #00ff9d;
+      --red: #ff3d6e;
+      --mono: 'Space Mono', monospace;
+      --display: 'Syne', sans-serif;
+      --radius: 12px;
+      --glow: 0 0 20px rgba(0,229,255,0.15);
+      --glow-strong: 0 0 40px rgba(0,229,255,0.3);
+    }
+
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: var(--display);
+      height: 100vh;
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+      user-select: none;
+    }
+
+    /* Titlebar */
+    .titlebar {
+      height: 48px;
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      padding: 0 16px;
+      -webkit-app-region: drag;
+      flex-shrink: 0;
+      gap: 12px;
+    }
+
+    .titlebar-logo {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-family: var(--display);
+      font-weight: 800;
+      font-size: 14px;
+      letter-spacing: 0.05em;
+    }
+
+    .logo-icon {
+      width: 28px;
+      height: 28px;
+      background: linear-gradient(135deg, var(--accent), var(--accent2));
+      border-radius: 6px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 14px;
+    }
+
+    .titlebar-title { color: var(--text); }
+    .titlebar-sub { color: var(--text-dim); font-size: 11px; font-family: var(--mono); }
+
+    .titlebar-controls {
+      margin-left: auto;
+      display: flex;
+      gap: 6px;
+      -webkit-app-region: no-drag;
+    }
+
+    .ctrl-btn {
+      width: 28px; height: 28px;
+      border-radius: 6px;
+      border: none;
+      cursor: pointer;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 12px;
+      transition: background 0.15s;
+      background: var(--surface2);
+      color: var(--text-dim);
+    }
+    .ctrl-btn:hover { background: var(--border); color: var(--text); }
+    .ctrl-btn.close:hover { background: var(--red); color: white; }
+
+    /* Layout */
+    .app-body {
+      display: flex;
+      flex: 1;
+      overflow: hidden;
+    }
+
+    /* Sidebar */
+    .sidebar {
+      width: 240px;
+      background: var(--surface);
+      border-right: 1px solid var(--border);
+      display: flex;
+      flex-direction: column;
+      flex-shrink: 0;
+    }
+
+    .sidebar-nav {
+      padding: 16px 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+
+    .nav-label {
+      font-size: 10px;
+      font-family: var(--mono);
+      color: var(--text-dim);
+      letter-spacing: 0.1em;
+      padding: 12px 8px 6px;
+      text-transform: uppercase;
+    }
+
+    .nav-item {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 9px 12px;
+      border-radius: 8px;
+      cursor: pointer;
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--text-dim);
+      transition: all 0.15s;
+      border: 1px solid transparent;
+    }
+
+    .nav-item:hover { background: var(--surface2); color: var(--text); }
+    .nav-item.active {
+      background: rgba(0,229,255,0.08);
+      border-color: rgba(0,229,255,0.2);
+      color: var(--accent);
+    }
+
+    .nav-icon { font-size: 16px; width: 20px; text-align: center; }
+
+    .status-bar {
+      margin-top: auto;
+      padding: 16px;
+      border-top: 1px solid var(--border);
+    }
+
+    .status-item {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 11px;
+      font-family: var(--mono);
+      color: var(--text-dim);
+      margin-bottom: 6px;
+    }
+
+    .status-dot {
+      width: 6px; height: 6px;
+      border-radius: 50%;
+      background: var(--text-dim);
+      flex-shrink: 0;
+    }
+    .status-dot.green { background: var(--green); box-shadow: 0 0 6px var(--green); }
+    .status-dot.red { background: var(--red); }
+    .status-dot.pulse {
+      animation: pulse 1.5s ease-in-out infinite;
+    }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.3; }
+    }
+
+    /* Main content */
+    .main {
+      flex: 1;
+      overflow-y: auto;
+      padding: 28px;
+      display: flex;
+      flex-direction: column;
+      gap: 24px;
+    }
+
+    .main::-webkit-scrollbar { width: 4px; }
+    .main::-webkit-scrollbar-track { background: transparent; }
+    .main::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+
+    /* Page header */
+    .page-header { display: flex; align-items: flex-start; justify-content: space-between; }
+    .page-title { font-size: 26px; font-weight: 800; letter-spacing: -0.02em; }
+    .page-title span { color: var(--accent); }
+    .page-sub { font-size: 13px; color: var(--text-dim); margin-top: 4px; font-family: var(--mono); }
+
+    /* Cards */
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 20px;
+    }
+
+    .card-header {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 16px;
+    }
+
+    .card-title {
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--text);
+      letter-spacing: 0.02em;
+    }
+
+    .card-icon {
+      width: 32px; height: 32px;
+      border-radius: 8px;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 15px;
+      flex-shrink: 0;
+    }
+
+    .card-icon.cyan { background: rgba(0,229,255,0.1); }
+    .card-icon.purple { background: rgba(191,95,255,0.1); }
+    .card-icon.pink { background: rgba(255,61,110,0.1); }
+    .card-icon.green { background: rgba(0,255,157,0.1); }
+
+    /* Two column layout */
+    .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+    .grid-3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+
+    /* Mode selector */
+    .mode-selector {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+    }
+
+    .mode-card {
+      padding: 16px;
+      border-radius: 10px;
+      border: 2px solid var(--border);
+      cursor: pointer;
+      transition: all 0.2s;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .mode-card:hover { border-color: rgba(0,229,255,0.3); background: rgba(0,229,255,0.03); }
+    .mode-card.selected { border-color: var(--accent); background: rgba(0,229,255,0.06); }
+
+    .mode-icon { font-size: 22px; }
+    .mode-name { font-size: 13px; font-weight: 700; }
+    .mode-desc { font-size: 11px; color: var(--text-dim); font-family: var(--mono); line-height: 1.4; }
+
+    /* Source picker */
+    .sources-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+      gap: 10px;
+      max-height: 200px;
+      overflow-y: auto;
+    }
+
+    .sources-grid::-webkit-scrollbar { width: 4px; }
+    .sources-grid::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+
+    .source-item {
+      border: 2px solid var(--border);
+      border-radius: 8px;
+      overflow: hidden;
+      cursor: pointer;
+      transition: all 0.2s;
+      position: relative;
+    }
+
+    .source-item:hover { border-color: rgba(0,229,255,0.4); }
+    .source-item.selected { border-color: var(--accent); box-shadow: var(--glow); }
+
+    .source-thumb {
+      width: 100%;
+      aspect-ratio: 16/9;
+      object-fit: cover;
+      display: block;
+      background: var(--surface2);
+    }
+
+    .source-name {
+      padding: 6px 8px;
+      font-size: 10px;
+      font-family: var(--mono);
+      color: var(--text-dim);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      background: var(--surface);
+    }
+
+    .source-item.selected .source-name { color: var(--accent); }
+
+    /* Quality selector */
+    .quality-pills {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    .quality-pill {
+      padding: 6px 14px;
+      border-radius: 100px;
+      border: 1px solid var(--border);
+      font-size: 12px;
+      font-family: var(--mono);
+      cursor: pointer;
+      transition: all 0.15s;
+      color: var(--text-dim);
+    }
+
+    .quality-pill:hover { border-color: var(--accent); color: var(--accent); }
+    .quality-pill.active {
+      background: var(--accent);
+      border-color: var(--accent);
+      color: var(--bg);
+      font-weight: 700;
+    }
+
+    /* Input */
+    .field { display: flex; flex-direction: column; gap: 6px; }
+    .field label { font-size: 11px; font-family: var(--mono); color: var(--text-dim); }
+
+    .input {
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 10px 14px;
+      color: var(--text);
+      font-family: var(--mono);
+      font-size: 13px;
+      outline: none;
+      transition: border 0.15s;
+      width: 100%;
+    }
+
+    .input:focus { border-color: var(--accent); }
+    .input::placeholder { color: var(--text-dim); }
+
+    /* Room code */
+    .room-code-box {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 10px 14px;
+    }
+
+    .room-code {
+      font-family: var(--mono);
+      font-size: 18px;
+      font-weight: 700;
+      letter-spacing: 0.12em;
+      color: var(--accent);
+      flex: 1;
+    }
+
+    .copy-btn {
+      background: none;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 5px 10px;
+      color: var(--text-dim);
+      font-size: 11px;
+      font-family: var(--mono);
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+
+    .copy-btn:hover { border-color: var(--accent); color: var(--accent); }
+
+    /* Buttons */
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      padding: 11px 22px;
+      border-radius: 8px;
+      border: none;
+      font-family: var(--display);
+      font-size: 13px;
+      font-weight: 700;
+      cursor: pointer;
+      transition: all 0.2s;
+      letter-spacing: 0.02em;
+    }
+
+    .btn-primary {
+      background: var(--accent);
+      color: var(--bg);
+    }
+    .btn-primary:hover { background: #33eaff; box-shadow: var(--glow-strong); transform: translateY(-1px); }
+    .btn-primary:disabled { opacity: 0.4; cursor: not-allowed; transform: none; box-shadow: none; }
+
+    .btn-danger {
+      background: var(--red);
+      color: white;
+    }
+    .btn-danger:hover { background: #ff5585; box-shadow: 0 0 20px rgba(255,61,110,0.3); }
+
+    .btn-ghost {
+      background: transparent;
+      border: 1px solid var(--border);
+      color: var(--text-dim);
+    }
+    .btn-ghost:hover { border-color: var(--text); color: var(--text); }
+
+    .btn-full { width: 100%; }
+
+    /* Stats */
+    .stats-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+
+    .stat-box {
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 12px;
+      text-align: center;
+    }
+
+    .stat-value {
+      font-size: 20px;
+      font-weight: 800;
+      font-family: var(--mono);
+      color: var(--accent);
+      letter-spacing: -0.02em;
+    }
+
+    .stat-label { font-size: 10px; color: var(--text-dim); font-family: var(--mono); margin-top: 2px; }
+
+    /* Preview area */
+    .preview-container {
+      position: relative;
+      background: #000;
+      border-radius: 10px;
+      overflow: hidden;
+      border: 1px solid var(--border);
+      aspect-ratio: 16/9;
+    }
+
+    #previewVideo, #remoteVideo {
+      width: 100%;
+      height: 100%;
+      object-fit: contain;
+      display: block;
+    }
+
+    .preview-overlay {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-direction: column;
+      gap: 8px;
+      color: var(--text-dim);
+      font-family: var(--mono);
+      font-size: 12px;
+    }
+
+    .preview-overlay-icon { font-size: 32px; opacity: 0.4; }
+
+    .live-badge {
+      position: absolute;
+      top: 10px;
+      left: 10px;
+      background: var(--red);
+      color: white;
+      font-size: 10px;
+      font-family: var(--mono);
+      font-weight: 700;
+      padding: 3px 8px;
+      border-radius: 4px;
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      letter-spacing: 0.08em;
+    }
+
+    .live-dot { width: 5px; height: 5px; border-radius: 50%; background: white; animation: pulse 1s infinite; }
+
+    /* Tabs */
+    .tabs { display: flex; gap: 0; border-bottom: 1px solid var(--border); margin-bottom: 16px; }
+    .tab {
+      padding: 8px 16px;
+      font-size: 12px;
+      font-family: var(--mono);
+      color: var(--text-dim);
+      cursor: pointer;
+      border-bottom: 2px solid transparent;
+      margin-bottom: -1px;
+      transition: all 0.15s;
+    }
+    .tab:hover { color: var(--text); }
+    .tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+
+    /* Notifications */
+    .notif-stack {
+      position: fixed;
+      bottom: 20px;
+      right: 20px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      z-index: 100;
+    }
+
+    .notif {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-left: 3px solid var(--accent);
+      border-radius: 8px;
+      padding: 10px 14px;
+      font-size: 12px;
+      font-family: var(--mono);
+      color: var(--text);
+      animation: slideIn 0.3s ease;
+      max-width: 260px;
+    }
+
+    .notif.error { border-left-color: var(--red); }
+    .notif.success { border-left-color: var(--green); }
+
+    @keyframes slideIn {
+      from { transform: translateX(20px); opacity: 0; }
+      to { transform: translateX(0); opacity: 1; }
+    }
+
+    /* Pages visibility */
+    .page { display: none; }
+    .page.active { display: flex; flex-direction: column; gap: 24px; }
+
+    /* Scrollbar */
+    .main::-webkit-scrollbar { width: 4px; }
+
+    /* Divider */
+    .divider { height: 1px; background: var(--border); margin: 4px 0; }
+
+    .badge {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 4px;
+      font-size: 10px;
+      font-family: var(--mono);
+      font-weight: 700;
+      background: rgba(0,229,255,0.1);
+      color: var(--accent);
+    }
+
+    .badge.green { background: rgba(0,255,157,0.1); color: var(--green); }
+    .badge.purple { background: rgba(191,95,255,0.1); color: var(--accent2); }
+
+    .info-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 6px 0;
+      border-bottom: 1px solid var(--border);
+      font-size: 12px;
+    }
+    .info-row:last-child { border-bottom: none; }
+    .info-key { color: var(--text-dim); font-family: var(--mono); }
+    .info-val { font-family: var(--mono); color: var(--text); font-weight: 600; }
+    .info-val.accent { color: var(--accent); }
+
+    /* Toggle */
+    .toggle-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 8px 0;
+    }
+    .toggle-info { display: flex; flex-direction: column; gap: 2px; }
+    .toggle-name { font-size: 13px; font-weight: 600; }
+    .toggle-desc { font-size: 11px; color: var(--text-dim); font-family: var(--mono); }
+
+    .toggle {
+      position: relative;
+      width: 40px;
+      height: 22px;
+      flex-shrink: 0;
+    }
+
+    .toggle input { opacity: 0; width: 0; height: 0; }
+
+    .toggle-slider {
+      position: absolute;
+      inset: 0;
+      background: var(--border);
+      border-radius: 100px;
+      cursor: pointer;
+      transition: 0.2s;
+    }
+
+    .toggle-slider:before {
+      content: '';
+      position: absolute;
+      width: 16px; height: 16px;
+      left: 3px; top: 3px;
+      background: white;
+      border-radius: 50%;
+      transition: 0.2s;
+    }
+
+    .toggle input:checked + .toggle-slider { background: var(--accent); }
+    .toggle input:checked + .toggle-slider:before { transform: translateX(18px); }
+
+    /* Connecting animation */
+    .connecting-anim {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+    }
+
+    .dot-anim {
+      width: 6px; height: 6px;
+      background: var(--accent);
+      border-radius: 50%;
+      animation: dotPulse 1.2s ease-in-out infinite;
+    }
+    .dot-anim:nth-child(2) { animation-delay: 0.2s; }
+    .dot-anim:nth-child(3) { animation-delay: 0.4s; }
+
+    @keyframes dotPulse {
+      0%, 80%, 100% { transform: scale(0.6); opacity: 0.4; }
+      40% { transform: scale(1); opacity: 1; }
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Titlebar -->
+  <div class="titlebar">
+    <div class="titlebar-logo">
+      <div class="logo-icon">📡</div>
+      <div>
+        <div class="titlebar-title">ScreenShare Pro</div>
+      </div>
+    </div>
+    <div style="margin-left:16px" id="titleStatus">
+      <span class="titlebar-sub" id="titleStatusText">Prêt</span>
+    </div>
+    <div class="titlebar-controls">
+      <button class="ctrl-btn" onclick="window.electronAPI.minimizeWindow()">─</button>
+      <button class="ctrl-btn" onclick="window.electronAPI.maximizeWindow()">□</button>
+      <button class="ctrl-btn close" onclick="window.electronAPI.closeWindow()">✕</button>
+    </div>
+  </div>
+
+  <!-- App Body -->
+  <div class="app-body">
+
+    <!-- Sidebar -->
+    <div class="sidebar">
+      <div class="sidebar-nav">
+        <div class="nav-label">Navigation</div>
+        <div class="nav-item active" onclick="showPage('share')" id="nav-share">
+          <span class="nav-icon">📤</span> Partager
+        </div>
+        <div class="nav-item" onclick="showPage('receive')" id="nav-receive">
+          <span class="nav-icon">📥</span> Recevoir
+        </div>
+        <div class="divider"></div>
+        <div class="nav-label">Outils</div>
+        <div class="nav-item" onclick="showPage('settings')" id="nav-settings">
+          <span class="nav-icon">⚙️</span> Paramètres
+        </div>
+        <div class="nav-item" onclick="showPage('info')" id="nav-info">
+          <span class="nav-icon">ℹ️</span> À propos
+        </div>
+      </div>
+
+      <div class="status-bar">
+        <div class="status-item">
+          <div class="status-dot green" id="serverDot"></div>
+          <span id="serverStatus">Serveur local actif</span>
+        </div>
+        <div class="status-item">
+          <div class="status-dot" id="connDot"></div>
+          <span id="connStatus">Non connecté</span>
+        </div>
+        <div class="status-item" style="margin-top:4px">
+          <span id="localIpDisplay" style="font-size:10px">IP: —</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Main content -->
+    <div class="main">
+
+      <!-- PAGE: Partager -->
+      <div class="page active" id="page-share">
+        <div class="page-header">
+          <div>
+            <div class="page-title">Partager <span>l'écran</span></div>
+            <div class="page-sub">Diffusez votre écran en 1080p à 60 fps</div>
+          </div>
+          <div id="shareHeaderBadge"></div>
+        </div>
+
+        <!-- Mode -->
+        <div class="card">
+          <div class="card-header">
+            <div class="card-icon cyan">🎯</div>
+            <div class="card-title">Mode de partage</div>
+          </div>
+          <div class="mode-selector">
+            <div class="mode-card selected" onclick="selectMode('local')" id="mode-local">
+              <div class="mode-icon">🏠</div>
+              <div class="mode-name">Réseau local</div>
+              <div class="mode-desc">Partage via LAN — latence minimale, aucun cloud</div>
+            </div>
+            <div class="mode-card" onclick="selectMode('code')" id="mode-code">
+              <div class="mode-icon">🔐</div>
+              <div class="mode-name">Code de session</div>
+              <div class="mode-desc">Accès via code partageable — fonctionne à distance</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Source -->
+        <div class="card">
+          <div class="card-header">
+            <div class="card-icon purple">🖥️</div>
+            <div class="card-title">Source à capturer</div>
+            <button class="btn btn-ghost" style="margin-left:auto;padding:6px 12px;font-size:11px" onclick="loadSources()">↺ Actualiser</button>
+          </div>
+          <div class="sources-grid" id="sourcesGrid">
+            <div style="grid-column: 1/-1; color: var(--text-dim); font-family: var(--mono); font-size: 12px; padding: 20px; text-align: center;">
+              Cliquez sur "Actualiser" pour charger les sources disponibles
+            </div>
+          </div>
+        </div>
+
+        <!-- Quality & Settings -->
+        <div class="grid-2">
+          <div class="card">
+            <div class="card-header">
+              <div class="card-icon green">✨</div>
+              <div class="card-title">Qualité vidéo</div>
+            </div>
+            <div style="display:flex; flex-direction:column; gap:12px">
+              <div class="field">
+                <label>Résolution cible</label>
+                <div class="quality-pills" id="resPills">
+                  <div class="quality-pill" data-res="720" onclick="selectRes(this)">720p</div>
+                  <div class="quality-pill active" data-res="1080" onclick="selectRes(this)">1080p</div>
+                  <div class="quality-pill" data-res="1440" onclick="selectRes(this)">1440p</div>
+                </div>
+              </div>
+              <div class="field">
+                <label>Fréquence d'images (FPS)</label>
+                <div class="quality-pills" id="fpsPills">
+                  <div class="quality-pill" data-fps="30" onclick="selectFps(this)">30 fps</div>
+                  <div class="quality-pill active" data-fps="60" onclick="selectFps(this)">60 fps</div>
+                </div>
+              </div>
+              <div class="field">
+                <label>Débit vidéo</label>
+                <div class="quality-pills" id="bitratePills">
+                  <div class="quality-pill" data-bitrate="4000000" onclick="selectBitrate(this)">4 Mbps</div>
+                  <div class="quality-pill active" data-bitrate="8000000" onclick="selectBitrate(this)">8 Mbps</div>
+                  <div class="quality-pill" data-bitrate="15000000" onclick="selectBitrate(this)">15 Mbps</div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="card-header">
+              <div class="card-icon pink">🎛️</div>
+              <div class="card-title">Options audio</div>
+            </div>
+            <div style="display:flex; flex-direction:column; gap:4px">
+              <div class="toggle-row">
+                <div class="toggle-info">
+                  <div class="toggle-name">Capturer l'audio système</div>
+                  <div class="toggle-desc">Partage le son de l'ordinateur</div>
+                </div>
+                <label class="toggle"><input type="checkbox" id="captureAudio" checked><span class="toggle-slider"></span></label>
+              </div>
+              <div class="toggle-row">
+                <div class="toggle-info">
+                  <div class="toggle-name">Inclure le micro</div>
+                  <div class="toggle-desc">Ajoute votre voix au stream</div>
+                </div>
+                <label class="toggle"><input type="checkbox" id="captureMic"><span class="toggle-slider"></span></label>
+              </div>
+              <div class="toggle-row">
+                <div class="toggle-info">
+                  <div class="toggle-name">Curseur souris</div>
+                  <div class="toggle-desc">Affiche le curseur à l'écran</div>
+                </div>
+                <label class="toggle"><input type="checkbox" id="showCursor" checked><span class="toggle-slider"></span></label>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Room info + Actions -->
+        <div class="card" id="roomInfoCard">
+          <div class="card-header">
+            <div class="card-icon cyan">🔗</div>
+            <div class="card-title">Connexion</div>
+          </div>
+          <div class="grid-2" style="gap:16px; align-items:start">
+            <div style="display:flex; flex-direction:column; gap:10px">
+              <div class="field">
+                <label>Code de session</label>
+                <div class="room-code-box">
+                  <span class="room-code" id="roomCodeDisplay">—</span>
+                  <button class="copy-btn" onclick="copyRoomCode()">Copier</button>
+                </div>
+              </div>
+              <div class="field">
+                <label>Adresse IP locale</label>
+                <input class="input" id="localIpField" readonly placeholder="Chargement...">
+              </div>
+            </div>
+            <div style="display:flex; flex-direction:column; gap:8px; justify-content:flex-end">
+              <button class="btn btn-primary btn-full" id="startBtn" onclick="startSharing()">
+                📡 Démarrer le partage
+              </button>
+              <button class="btn btn-danger btn-full" id="stopBtn" onclick="stopSharing()" style="display:none">
+                ⏹ Arrêter le partage
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Preview -->
+        <div class="card" id="previewCard" style="display:none">
+          <div class="card-header">
+            <div class="card-icon green">👁️</div>
+            <div class="card-title">Aperçu local</div>
+            <div class="badge green" style="margin-left:auto">EN DIRECT</div>
+          </div>
+          <div class="preview-container">
+            <video id="previewVideo" autoplay muted playsinline></video>
+            <div class="live-badge"><div class="live-dot"></div>LIVE</div>
+          </div>
+          <div class="stats-grid" style="margin-top:12px">
+            <div class="stat-box">
+              <div class="stat-value" id="statRes">1080p</div>
+              <div class="stat-label">Résolution</div>
+            </div>
+            <div class="stat-box">
+              <div class="stat-value" id="statFps">60</div>
+              <div class="stat-label">FPS cible</div>
+            </div>
+            <div class="stat-box">
+              <div class="stat-value" id="statPeers">0</div>
+              <div class="stat-label">Spectateurs</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- PAGE: Recevoir -->
+      <div class="page" id="page-receive">
+        <div class="page-header">
+          <div>
+            <div class="page-title">Recevoir <span>un flux</span></div>
+            <div class="page-sub">Rejoignez une session de partage d'écran</div>
+          </div>
+        </div>
+
+        <div class="grid-2">
+          <div class="card">
+            <div class="card-header">
+              <div class="card-icon cyan">🔗</div>
+              <div class="card-title">Rejoindre par code</div>
+            </div>
+            <div style="display:flex; flex-direction:column; gap:12px">
+              <div class="field">
+                <label>Code de session</label>
+                <input class="input" id="joinCodeInput" placeholder="Ex: ABC-123" oninput="this.value=this.value.toUpperCase()">
+              </div>
+              <div class="field">
+                <label>Adresse du serveur (IP ou localhost)</label>
+                <input class="input" id="joinHostInput" placeholder="192.168.1.x ou localhost">
+              </div>
+              <button class="btn btn-primary btn-full" id="joinBtn" onclick="joinSession()">
+                📥 Rejoindre la session
+              </button>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="card-header">
+              <div class="card-icon purple">📶</div>
+              <div class="card-title">État de la connexion</div>
+            </div>
+            <div id="receiveStatus" style="display:flex; flex-direction:column; gap:8px; color:var(--text-dim); font-family:var(--mono); font-size:12px">
+              <div style="text-align:center; padding:16px 0">
+                <div style="font-size:32px; opacity:0.3">📡</div>
+                <div style="margin-top:8px">En attente de connexion...</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Remote video -->
+        <div class="card" id="remoteCard" style="display:none">
+          <div class="card-header">
+            <div class="card-icon pink">📺</div>
+            <div class="card-title">Flux reçu</div>
+            <button class="btn btn-ghost" style="margin-left:auto;padding:6px 12px;font-size:11px" onclick="toggleFullscreen()">⛶ Plein écran</button>
+            <button class="btn btn-danger" style="padding:6px 12px;font-size:11px" onclick="leaveSession()">✕ Quitter</button>
+          </div>
+          <div class="preview-container" id="remoteContainer">
+            <video id="remoteVideo" autoplay playsinline></video>
+            <div class="live-badge"><div class="live-dot"></div>LIVE</div>
+          </div>
+          <div class="stats-grid" style="margin-top:12px">
+            <div class="stat-box">
+              <div class="stat-value" id="recvRes">—</div>
+              <div class="stat-label">Résolution</div>
+            </div>
+            <div class="stat-box">
+              <div class="stat-value" id="recvFps">—</div>
+              <div class="stat-label">FPS</div>
+            </div>
+            <div class="stat-box">
+              <div class="stat-value" id="recvLatency">—</div>
+              <div class="stat-label">Latence</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- PAGE: Paramètres -->
+      <div class="page" id="page-settings">
+        <div class="page-header">
+          <div>
+            <div class="page-title">Para<span>mètres</span></div>
+            <div class="page-sub">Configuration avancée</div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-header">
+            <div class="card-icon cyan">🌐</div>
+            <div class="card-title">Réseau & Serveur</div>
+          </div>
+          <div>
+            <div class="info-row">
+              <span class="info-key">Port de signalisation</span>
+              <span class="info-val accent" id="settingsPort">8765</span>
+            </div>
+            <div class="info-row">
+              <span class="info-key">Adresse IP locale</span>
+              <span class="info-val accent" id="settingsIp">—</span>
+            </div>
+            <div class="info-row">
+              <span class="info-key">Protocole WebRTC</span>
+              <span class="info-val">VP8 / H.264</span>
+            </div>
+            <div class="info-row">
+              <span class="info-key">STUN Server</span>
+              <span class="info-val">stun:stun.l.google.com:19302</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-header">
+            <div class="card-icon purple">🎬</div>
+            <div class="card-title">Encodage vidéo</div>
+          </div>
+          <div class="toggle-row">
+            <div class="toggle-info">
+              <div class="toggle-name">Accélération matérielle (GPU)</div>
+              <div class="toggle-desc">Utilise le GPU pour encoder (NVENC / VideoToolbox)</div>
+            </div>
+            <label class="toggle"><input type="checkbox" checked><span class="toggle-slider"></span></label>
+          </div>
+          <div class="toggle-row">
+            <div class="toggle-info">
+              <div class="toggle-name">Mode faible latence</div>
+              <div class="toggle-desc">Priorise la latence sur la qualité</div>
+            </div>
+            <label class="toggle"><input type="checkbox" id="lowLatencyMode"><span class="toggle-slider"></span></label>
+          </div>
+          <div class="toggle-row">
+            <div class="toggle-info">
+              <div class="toggle-name">Bitrate adaptatif (ABR)</div>
+              <div class="toggle-desc">Ajuste la qualité selon la bande passante</div>
+            </div>
+            <label class="toggle"><input type="checkbox" checked><span class="toggle-slider"></span></label>
+          </div>
+        </div>
+      </div>
+
+      <!-- PAGE: Info -->
+      <div class="page" id="page-info">
+        <div class="page-header">
+          <div>
+            <div class="page-title">À pro<span>pos</span></div>
+          </div>
+        </div>
+        <div class="card">
+          <div style="text-align:center; padding: 12px 0 24px">
+            <div style="font-size:48px">📡</div>
+            <div style="font-size:22px; font-weight:800; margin-top:12px">ScreenShare Pro</div>
+            <div style="color:var(--text-dim); font-family:var(--mono); font-size:12px; margin-top:4px">v1.0.0 • Electron + WebRTC</div>
+            <div style="margin-top:20px; color:var(--text-dim); font-size:13px; line-height:1.7; max-width: 420px; margin-inline: auto">
+              Partage d'écran local en haute qualité (jusqu'à 1080p60) via WebRTC.
+              Aucun serveur cloud, aucune inscription. Fonctionne entièrement en local ou sur réseau LAN.
+            </div>
+          </div>
+          <div>
+            <div class="info-row"><span class="info-key">Moteur</span><span class="info-val">Electron + Node.js</span></div>
+            <div class="info-row"><span class="info-key">Protocole</span><span class="info-val">WebRTC (P2P)</span></div>
+            <div class="info-row"><span class="info-key">Signalisation</span><span class="info-val">WebSocket local</span></div>
+            <div class="info-row"><span class="info-key">Résolution max</span><span class="info-val accent">1440p</span></div>
+            <div class="info-row"><span class="info-key">FPS max</span><span class="info-val accent">60 fps</span></div>
+          </div>
+        </div>
+      </div>
+
+    </div><!-- /main -->
+  </div>
+
+  <div class="notif-stack" id="notifStack"></div>
+
+  <script src="renderer.js"></script>
+</body>
+</html>
