@@ -1,16 +1,36 @@
 {
-  "name": "screenshare-signaling-server",
+  "name": "screenshare-app",
   "version": "1.0.0",
-  "description": "Serveur de signalisation WebRTC pour ScreenShare Pro",
-  "main": "server.js",
+  "description": "Application de partage d'écran 1080p60",
+  "main": "main.js",
+  "author": {
+    "name": "Enzo D.",
+    "email": "davalenzo@gmail.com",
+    "url": "https://github.com/davalenzo"
+  },
   "scripts": {
-    "start": "node server.js",
-    "dev": "node --watch server.js"
+    "start": "electron . --enable-features=ElectronSerialChooser --disable-web-security",
+    "start:safe": "electron .",
+    "build": "electron-builder",
+    "build:portable": "electron-builder --win portable",
+    "build:all": "electron-builder --win nsis portable"
   },
   "dependencies": {
     "ws": "^8.16.0"
   },
-  "engines": {
-    "node": ">=18.0.0"
+  "devDependencies": {
+    "electron": "^28.0.0",
+    "electron-builder": "^24.0.0"
+  },
+  "build": {
+    "appId": "com.screenshare.app",
+    "productName": "ScreenShare Pro",
+    "directories": { "output": "dist" },
+    "win": {
+      "target": [
+        "nsis",
+        "portable"
+      ]
+    }
   }
 }

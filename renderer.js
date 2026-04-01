@@ -2,7 +2,7 @@
 // 🔧 APRÈS déploiement sur Railway, remplace cette URL par la tienne :
 //    ex: wss://screenshare-signaling.up.railway.app
 // En local (développement), le serveur local sur port 8765 est utilisé en fallback.
-const REMOTE_SIGNALING_URL = 'wss://TON-PROJET.up.railway.app';
+const REMOTE_SIGNALING_URL = 'wss://share-screen-production.up.railway.app';
 const USE_REMOTE = !REMOTE_SIGNALING_URL.includes('TON-PROJET');
 
 // ─── State ───────────────────────────────────────────────────────────────────
@@ -23,6 +23,7 @@ const state = {
   // Receiver
   receiverPc: null,
   receiverWs: null,
+  receiverTargetId: null,
 };
 
 // ─── ICE config (STUN public + TURN Metered.ca gratuit) ──────────────────────
@@ -160,10 +161,20 @@ async function loadSources() {
       const div = document.createElement('div');
       div.className = 'source-item';
       div.dataset.id = src.id;
+      const thumbSrc = src.thumbnail || src.appIcon || '';
       div.innerHTML = `
-        <img class="source-thumb" src="${src.thumbnail}" alt="">
+        <img class="source-thumb" src="${thumbSrc}" alt="${src.name}">
         <div class="source-name">${src.name}</div>
       `;
+      const img = div.querySelector('.source-thumb');
+      if (!thumbSrc) {
+        img.style.objectFit = 'contain';
+        img.style.padding = '20px';
+      }
+      img.onerror = () => {
+        img.style.background = 'var(--surface2)';
+        img.style.objectFit = 'contain';
+      };
       div.onclick = () => {
         document.querySelectorAll('.source-item').forEach(s => s.classList.remove('selected'));
         div.classList.add('selected');
@@ -319,10 +330,12 @@ function connectSignaling(role) {
       return;
     }
 
-    // Le serveur envoie 'viewer-ready' quand un viewer rejoint (nouveau protocole)
-    if ((msg.type === 'viewer-ready' || (msg.type === 'peer-joined' && msg.role === 'viewer'))) {
+    // Nouveau protocole: le serveur envoie 'viewer-ready' quand un viewer rejoint.
+    if (msg.type === 'viewer-ready') {
       const peerId = msg.viewerId || msg.id || Date.now().toString();
-      await createBroadcasterPeer(peerId);
+      if (!state.peerConnections.has(peerId)) {
+        await createBroadcasterPeer(peerId);
+      }
     }
 
     if (msg.type === 'answer') {
@@ -384,7 +397,7 @@ async function createBroadcasterPeer(peerId) {
 
   pc.onicecandidate = ({ candidate }) => {
     if (candidate && state.signalingWs) {
-      state.signalingWs.send(JSON.stringify({ type: 'ice-candidate', candidate }));
+      state.signalingWs.send(JSON.stringify({ type: 'ice-candidate', candidate, targetId: peerId }));
     }
   };
 
@@ -402,7 +415,7 @@ async function createBroadcasterPeer(peerId) {
   const offer = await pc.createOffer({ offerToReceiveVideo: false, offerToReceiveAudio: false });
   await pc.setLocalDescription(offer);
 
-  state.signalingWs.send(JSON.stringify({ type: 'offer', sdp: offer.sdp, type: offer.type }));
+  state.signalingWs.send(JSON.stringify({ type: 'offer', sdp: offer.sdp, targetId: peerId }));
 }
 
 // ─── Receive ──────────────────────────────────────────────────────────────────
@@ -477,11 +490,13 @@ async function joinSession() {
 }
 
 async function handleReceiverOffer(offer) {
+  state.receiverTargetId = offer.fromId || null;
   state.receiverPc = new RTCPeerConnection(ICE_CONFIG);
 
   state.receiverPc.ontrack = (event) => {
     const video = document.getElementById('remoteVideo');
     if (!video.srcObject) video.srcObject = event.streams[0];
+    video.play().catch(() => {});
 
     // Show remote card
     document.getElementById('remoteCard').style.display = '';
@@ -492,7 +507,7 @@ async function handleReceiverOffer(offer) {
 
   state.receiverPc.onicecandidate = ({ candidate }) => {
     if (candidate && state.receiverWs) {
-      state.receiverWs.send(JSON.stringify({ type: 'ice-candidate', candidate }));
+      state.receiverWs.send(JSON.stringify({ type: 'ice-candidate', candidate, targetId: state.receiverTargetId }));
     }
   };
 
@@ -512,12 +527,17 @@ async function handleReceiverOffer(offer) {
   const answer = await state.receiverPc.createAnswer();
   await state.receiverPc.setLocalDescription(answer);
 
-  state.receiverWs.send(JSON.stringify({ type: 'answer', sdp: answer.sdp, type: answer.type }));
+  state.receiverWs.send(JSON.stringify({ type: 'answer', sdp: answer.sdp, targetId: state.receiverTargetId }));
 }
 
 function leaveSession() {
   if (state.receiverWs) { state.receiverWs.close(); state.receiverWs = null; }
   if (state.receiverPc) { state.receiverPc.close(); state.receiverPc = null; }
+  state.receiverTargetId = null;
+
+  if (document.body.classList.contains('remote-fullscreen')) {
+    setRemoteFullscreen(false);
+  }
 
   const video = document.getElementById('remoteVideo');
   video.srcObject = null;
@@ -528,13 +548,30 @@ function leaveSession() {
   updateReceiveStatus('idle');
 }
 
-function toggleFullscreen() {
+async function setRemoteFullscreen(enabled) {
+  document.body.classList.toggle('remote-fullscreen', enabled);
+  const btn = document.getElementById('fullscreenBtn');
+  if (btn) btn.textContent = enabled ? '🡼 Quitter le plein écran' : '⛶ Plein écran';
+
+  // Prefer native Electron fullscreen to avoid DOM fullscreen inconsistencies.
+  if (window.electronAPI?.setFullscreenWindow) {
+    await window.electronAPI.setFullscreenWindow(enabled);
+    return;
+  }
+
   const container = document.getElementById('remoteContainer');
   if (!document.fullscreenElement) {
-    container.requestFullscreen().catch(() => {});
-  } else {
+    if (enabled && container?.requestFullscreen) {
+      container.requestFullscreen().catch(() => {});
+    }
+  } else if (!enabled && document.exitFullscreen) {
     document.exitFullscreen();
   }
+}
+
+function toggleFullscreen() {
+  const enabled = !document.body.classList.contains('remote-fullscreen');
+  setRemoteFullscreen(enabled).catch(() => {});
 }
 
 // ─── Stats (receiver) ─────────────────────────────────────────────────────────

@@ -20,7 +20,8 @@ function createWindow() {
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
-      preload: path.join(__dirname, 'preload.js')
+      preload: path.join(__dirname, 'preload.js'),
+      allowRunningInsecureContent: true
     },
     show: false
   });
@@ -128,14 +129,24 @@ function startSignalingServer() {
 
 // IPC handlers
 ipcMain.handle('get-sources', async () => {
+  const primaryDisplay = screen.getPrimaryDisplay();
+  const scale = primaryDisplay?.scaleFactor || 1;
+  const targetWidth = Math.min(640, Math.floor((primaryDisplay?.workAreaSize?.width || 1280) * 0.35));
+  const targetHeight = Math.floor(targetWidth * 9 / 16);
+
   const sources = await desktopCapturer.getSources({
     types: ['screen', 'window'],
-    thumbnailSize: { width: 320, height: 180 }
+    fetchWindowIcons: true,
+    thumbnailSize: {
+      width: Math.max(320, Math.floor(targetWidth * scale)),
+      height: Math.max(180, Math.floor(targetHeight * scale))
+    }
   });
   return sources.map(s => ({
     id: s.id,
     name: s.name,
-    thumbnail: s.thumbnail.toDataURL()
+    thumbnail: s.thumbnail && !s.thumbnail.isEmpty() ? s.thumbnail.toDataURL() : '',
+    appIcon: s.appIcon && !s.appIcon.isEmpty() ? s.appIcon.toDataURL() : ''
   }));
 });
 
@@ -157,7 +168,19 @@ ipcMain.on('window-maximize', () => {
   if (mainWindow.isMaximized()) mainWindow.unmaximize();
   else mainWindow.maximize();
 });
+ipcMain.on('window-toggle-fullscreen', () => {
+  if (!mainWindow) return;
+  mainWindow.setFullScreen(!mainWindow.isFullScreen());
+});
+ipcMain.handle('window-set-fullscreen', (_event, enabled) => {
+  if (!mainWindow) return false;
+  mainWindow.setFullScreen(Boolean(enabled));
+  return mainWindow.isFullScreen();
+});
 ipcMain.on('window-close', () => mainWindow.close());
+
+app.commandLine.appendSwitch('ignore-certificate-errors');
+app.commandLine.appendSwitch('allow-insecure-websocket-from-https-origin');
 
 app.whenReady().then(() => {
   startSignalingServer();

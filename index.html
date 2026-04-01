@@ -2,7 +2,7 @@
 <html lang="fr">
 <head>
   <meta charset="UTF-8">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; connect-src ws://localhost:*; media-src *;">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data: blob:; connect-src 'self' ws://*:* wss://*; media-src *;">
   <title>ScreenShare Pro</title>
   <link href="https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=Syne:wght@400;600;800&display=swap" rel="stylesheet">
   <style>
@@ -651,6 +651,66 @@
       0%, 80%, 100% { transform: scale(0.6); opacity: 0.4; }
       40% { transform: scale(1); opacity: 1; }
     }
+
+    /* Immersive remote fullscreen */
+    body.remote-fullscreen .titlebar,
+    body.remote-fullscreen .sidebar,
+    body.remote-fullscreen #page-receive .page-header,
+    body.remote-fullscreen #page-receive .grid-2 {
+      display: none !important;
+    }
+
+    body.remote-fullscreen .main {
+      padding: 0;
+      overflow: hidden;
+    }
+
+    body.remote-fullscreen #page-receive {
+      display: block;
+      height: 100vh;
+    }
+
+    body.remote-fullscreen #remoteCard {
+      position: fixed;
+      inset: 0;
+      margin: 0;
+      border: none;
+      border-radius: 0;
+      padding: 0;
+      background: #000;
+      z-index: 9999;
+    }
+
+    body.remote-fullscreen #remoteCard .card-header {
+      position: absolute;
+      top: 12px;
+      left: 12px;
+      right: 12px;
+      margin: 0;
+      padding: 10px 12px;
+      border-radius: 10px;
+      background: rgba(0, 0, 0, 0.5);
+      backdrop-filter: blur(4px);
+      z-index: 2;
+      opacity: 0;
+      transition: opacity 0.2s ease;
+    }
+
+    body.remote-fullscreen #remoteCard:hover .card-header {
+      opacity: 1;
+    }
+
+    body.remote-fullscreen #remoteContainer {
+      width: 100vw;
+      height: 100vh;
+      aspect-ratio: auto;
+      border: none;
+      border-radius: 0;
+    }
+
+    body.remote-fullscreen #remoteCard .stats-grid {
+      display: none;
+    }
   </style>
 </head>
 <body>
@@ -931,7 +991,7 @@
           <div class="card-header">
             <div class="card-icon pink">📺</div>
             <div class="card-title">Flux reçu</div>
-            <button class="btn btn-ghost" style="margin-left:auto;padding:6px 12px;font-size:11px" onclick="toggleFullscreen()">⛶ Plein écran</button>
+            <button class="btn btn-ghost" id="fullscreenBtn" style="margin-left:auto;padding:6px 12px;font-size:11px" onclick="toggleFullscreen()">⛶ Plein écran</button>
             <button class="btn btn-danger" style="padding:6px 12px;font-size:11px" onclick="leaveSession()">✕ Quitter</button>
           </div>
           <div class="preview-container" id="remoteContainer">
