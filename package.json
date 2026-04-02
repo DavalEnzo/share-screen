@@ -9,13 +9,15 @@
     "url": "https://github.com/davalenzo"
   },
   "scripts": {
-    "start": "electron . --enable-features=ElectronSerialChooser --disable-web-security",
+    "start": "electron .",
+    "start:unsafe": "electron . --enable-features=ElectronSerialChooser --disable-web-security",
     "start:safe": "electron .",
     "build": "electron-builder",
     "build:portable": "electron-builder --win portable",
     "build:all": "electron-builder --win nsis portable"
   },
   "dependencies": {
+    "dotenv": "^17.4.0",
     "ws": "^8.16.0"
   },
   "devDependencies": {
@@ -25,7 +27,9 @@
   "build": {
     "appId": "com.screenshare.app",
     "productName": "ScreenShare Pro",
-    "directories": { "output": "dist" },
+    "directories": {
+      "output": "dist"
+    },
     "win": {
       "target": [
         "nsis",

@@ -1,4 +1,5 @@
-const { app, BrowserWindow, ipcMain, desktopCapturer, screen, session } = require('electron');
+require('dotenv').config();
+const { app, BrowserWindow, ipcMain, desktopCapturer, screen, session, clipboard } = require('electron');
 const path = require('path');
 const http = require('http');
 const { Server } = require('ws');
@@ -21,7 +22,7 @@ function createWindow() {
       nodeIntegration: false,
       contextIsolation: true,
       preload: path.join(__dirname, 'preload.js'),
-      allowRunningInsecureContent: true
+      webSecurity: true
     },
     show: false
   });
@@ -31,9 +32,10 @@ function createWindow() {
 
   // 1. Autoriser toutes les permissions media demandées par le renderer
   mainWindow.webContents.session.setPermissionRequestHandler(
-    (webContents, permission, callback) => {
-      const allowed = ['media', 'display-capture', 'screen', 'audioCapture', 'videoCapture'];
-      callback(allowed.includes(permission));
+    (_webContents, permission, callback, details) => {
+      const allowed = new Set(['media', 'display-capture', 'screen', 'audioCapture', 'videoCapture']);
+      const isLocalApp = (details?.requestingUrl || '').startsWith('file://');
+      callback(isLocalApp && allowed.has(permission));
     }
   );
 
@@ -65,58 +67,153 @@ function startSignalingServer() {
   signalingServer = http.createServer();
   wss = new Server({ server: signalingServer });
 
+  // rooms : Map<roomCode, Set<{ws, role, id}>>
   const rooms = new Map();
 
-  wss.on('connection', (ws) => {
+  setInterval(() => {
+    for (const [code, members] of rooms) {
+      if (members.size === 0) rooms.delete(code);
+    }
+  }, 5 * 60 * 1000);
+
+  wss.on('connection', (ws, req) => {
+    const ip = req?.headers?.['x-forwarded-for'] || req?.socket?.remoteAddress || 'local';
+    const clientId = Math.random().toString(36).slice(2, 8);
     let clientRoom = null;
     let clientRole = null;
 
-    ws.on('message', (data) => {
-      try {
-        const msg = JSON.parse(data.toString());
+    console.log(`[+] Client ${clientId} connecté (${ip})`);
 
-        switch (msg.type) {
-          case 'join': {
-            clientRoom = msg.room;
-            clientRole = msg.role;
-            if (!rooms.has(msg.room)) rooms.set(msg.room, new Set());
-            rooms.get(msg.room).add(ws);
-            ws.send(JSON.stringify({ type: 'joined', room: msg.room, role: msg.role }));
-            // Informer les autres dans la room
-            broadcast(msg.room, ws, { type: 'peer-joined', role: msg.role });
-            break;
+    const joinTimeout = setTimeout(() => {
+      if (!clientRoom) {
+        ws.close(1008, 'Join timeout');
+      }
+    }, 10_000);
+
+    ws.on('message', (data) => {
+      let msg;
+      try {
+        msg = JSON.parse(data.toString());
+      } catch {
+        return;
+      }
+
+      switch (msg.type) {
+        case 'join': {
+          clearTimeout(joinTimeout);
+
+          const code = (msg.room || '').toUpperCase().trim();
+          if (!code || code.length < 3) {
+            ws.send(JSON.stringify({ type: 'error', message: 'Code invalide' }));
+            return;
           }
-          case 'offer':
-          case 'answer':
-          case 'ice-candidate': {
-            broadcast(clientRoom, ws, msg);
-            break;
+
+          clientRoom = code;
+          clientRole = msg.role === 'viewer' ? 'viewer' : 'broadcaster';
+
+          if (!rooms.has(code)) rooms.set(code, new Set());
+          const room = rooms.get(code);
+
+          const broadcasters = [...room].filter(m => m.role === 'broadcaster');
+          if (clientRole === 'broadcaster' && broadcasters.length >= 1) {
+            ws.send(JSON.stringify({ type: 'error', message: 'Un diffuseur est déjà dans cette session' }));
+            return;
           }
-          case 'leave': {
-            cleanup();
-            break;
+          if (room.size >= 11) {
+            ws.send(JSON.stringify({ type: 'error', message: 'Session pleine (max 10 viewers)' }));
+            return;
           }
+
+          const member = { ws, role: clientRole, id: clientId };
+          room.add(member);
+
+          ws.send(JSON.stringify({ type: 'joined', room: code, role: clientRole, id: clientId }));
+          broadcast(code, ws, { type: 'peer-joined', role: clientRole, id: clientId });
+
+          if (clientRole === 'viewer') {
+            broadcastTo(code, 'broadcaster', ws, { type: 'viewer-ready', viewerId: clientId });
+          }
+
+          console.log(`[=] ${clientId} (${clientRole}) -> room "${code}" (${room.size} membres)`);
+          break;
         }
-      } catch (e) {
-        console.error('Parse error:', e);
+
+        case 'offer':
+        case 'answer':
+        case 'ice-candidate': {
+          if (msg.targetId) {
+            sendToId(clientRoom, msg.targetId, { ...msg, fromId: clientId });
+          } else {
+            broadcast(clientRoom, ws, { ...msg, fromId: clientId });
+          }
+          break;
+        }
+
+        case 'ping': {
+          ws.send(JSON.stringify({ type: 'pong', ts: Date.now() }));
+          break;
+        }
+
+        case 'leave': {
+          cleanup();
+          break;
+        }
       }
     });
 
-    ws.on('close', () => cleanup());
+    ws.on('close', () => {
+      clearTimeout(joinTimeout);
+      cleanup();
+    });
+
+    ws.on('error', (err) => {
+      console.error(`[!] Erreur client ${clientId}:`, err.message);
+    });
 
     function cleanup() {
-      if (clientRoom && rooms.has(clientRoom)) {
-        rooms.get(clientRoom).delete(ws);
-        broadcast(clientRoom, ws, { type: 'peer-left', role: clientRole });
-        if (rooms.get(clientRoom).size === 0) rooms.delete(clientRoom);
+      if (!clientRoom || !rooms.has(clientRoom)) return;
+      const room = rooms.get(clientRoom);
+
+      for (const member of room) {
+        if (member.id === clientId) {
+          room.delete(member);
+          break;
+        }
       }
+
+      broadcast(clientRoom, ws, { type: 'peer-left', role: clientRole, id: clientId });
+      console.log(`[-] ${clientId} (${clientRole}) quitte "${clientRoom}" (${room.size} restants)`);
+
+      if (room.size === 0) rooms.delete(clientRoom);
+      clientRoom = null;
     }
 
-    function broadcast(room, sender, msg) {
-      if (!room || !rooms.has(room)) return;
-      rooms.get(room).forEach(client => {
-        if (client !== sender && client.readyState === 1) {
-          client.send(JSON.stringify(msg));
+    function broadcast(roomCode, sender, msg) {
+      if (!roomCode || !rooms.has(roomCode)) return;
+      const payload = JSON.stringify(msg);
+      rooms.get(roomCode).forEach(member => {
+        if (member.ws !== sender && member.ws.readyState === 1) {
+          member.ws.send(payload);
+        }
+      });
+    }
+
+    function broadcastTo(roomCode, role, sender, msg) {
+      if (!roomCode || !rooms.has(roomCode)) return;
+      const payload = JSON.stringify(msg);
+      rooms.get(roomCode).forEach(member => {
+        if (member.ws !== sender && member.role === role && member.ws.readyState === 1) {
+          member.ws.send(payload);
+        }
+      });
+    }
+
+    function sendToId(roomCode, targetId, msg) {
+      if (!roomCode || !rooms.has(roomCode)) return;
+      const payload = JSON.stringify(msg);
+      rooms.get(roomCode).forEach(member => {
+        if (member.id === targetId && member.ws.readyState === 1) {
+          member.ws.send(payload);
         }
       });
     }
@@ -124,6 +221,14 @@ function startSignalingServer() {
 
   signalingServer.listen(PORT, () => {
     console.log(`Signaling server running on ws://localhost:${PORT}`);
+  });
+
+  signalingServer.on('close', () => {
+    if (wss) {
+      wss.clients.forEach((client) => {
+        try { client.close(1001, 'Server shutting down'); } catch {}
+      });
+    }
   });
 }
 
@@ -162,6 +267,10 @@ ipcMain.handle('get-local-ip', () => {
 });
 
 ipcMain.handle('get-signaling-port', () => PORT);
+ipcMain.handle('clipboard-write-text', (_event, text) => {
+  clipboard.writeText(String(text || ''));
+  return true;
+});
 
 ipcMain.on('window-minimize', () => mainWindow.minimize());
 ipcMain.on('window-maximize', () => {
@@ -178,9 +287,6 @@ ipcMain.handle('window-set-fullscreen', (_event, enabled) => {
   return mainWindow.isFullScreen();
 });
 ipcMain.on('window-close', () => mainWindow.close());
-
-app.commandLine.appendSwitch('ignore-certificate-errors');
-app.commandLine.appendSwitch('allow-insecure-websocket-from-https-origin');
 
 app.whenReady().then(() => {
   startSignalingServer();

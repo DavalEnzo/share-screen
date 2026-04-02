@@ -2,7 +2,7 @@
 <html lang="fr">
 <head>
   <meta charset="UTF-8">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data: blob:; connect-src 'self' ws://*:* wss://*; media-src *;">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data: blob:; connect-src 'self' ws://*:* wss://*; media-src *;">
   <title>ScreenShare Pro</title>
   <link href="https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=Syne:wght@400;600;800&display=swap" rel="stylesheet">
   <style>
@@ -727,9 +727,9 @@
       <span class="titlebar-sub" id="titleStatusText">Prêt</span>
     </div>
     <div class="titlebar-controls">
-      <button class="ctrl-btn" onclick="window.electronAPI.minimizeWindow()">─</button>
-      <button class="ctrl-btn" onclick="window.electronAPI.maximizeWindow()">□</button>
-      <button class="ctrl-btn close" onclick="window.electronAPI.closeWindow()">✕</button>
+      <button class="ctrl-btn" id="btnMinimize">─</button>
+      <button class="ctrl-btn" id="btnMaximize">□</button>
+      <button class="ctrl-btn close" id="btnClose">✕</button>
     </div>
   </div>
 
@@ -740,18 +740,18 @@
     <div class="sidebar">
       <div class="sidebar-nav">
         <div class="nav-label">Navigation</div>
-        <div class="nav-item active" onclick="showPage('share')" id="nav-share">
+        <div class="nav-item active" id="nav-share">
           <span class="nav-icon">📤</span> Partager
         </div>
-        <div class="nav-item" onclick="showPage('receive')" id="nav-receive">
+        <div class="nav-item" id="nav-receive">
           <span class="nav-icon">📥</span> Recevoir
         </div>
         <div class="divider"></div>
         <div class="nav-label">Outils</div>
-        <div class="nav-item" onclick="showPage('settings')" id="nav-settings">
+        <div class="nav-item" id="nav-settings">
           <span class="nav-icon">⚙️</span> Paramètres
         </div>
-        <div class="nav-item" onclick="showPage('info')" id="nav-info">
+        <div class="nav-item" id="nav-info">
           <span class="nav-icon">ℹ️</span> À propos
         </div>
       </div>
@@ -791,12 +791,12 @@
             <div class="card-title">Mode de partage</div>
           </div>
           <div class="mode-selector">
-            <div class="mode-card selected" onclick="selectMode('local')" id="mode-local">
+            <div class="mode-card selected" id="mode-local">
               <div class="mode-icon">🏠</div>
               <div class="mode-name">Réseau local</div>
               <div class="mode-desc">Partage via LAN — latence minimale, aucun cloud</div>
             </div>
-            <div class="mode-card" onclick="selectMode('code')" id="mode-code">
+            <div class="mode-card" id="mode-code">
               <div class="mode-icon">🔐</div>
               <div class="mode-name">Code de session</div>
               <div class="mode-desc">Accès via code partageable — fonctionne à distance</div>
@@ -809,7 +809,7 @@
           <div class="card-header">
             <div class="card-icon purple">🖥️</div>
             <div class="card-title">Source à capturer</div>
-            <button class="btn btn-ghost" style="margin-left:auto;padding:6px 12px;font-size:11px" onclick="loadSources()">↺ Actualiser</button>
+            <button class="btn btn-ghost" id="refreshSourcesBtn" style="margin-left:auto;padding:6px 12px;font-size:11px">↺ Actualiser</button>
           </div>
           <div class="sources-grid" id="sourcesGrid">
             <div style="grid-column: 1/-1; color: var(--text-dim); font-family: var(--mono); font-size: 12px; padding: 20px; text-align: center;">
@@ -829,24 +829,24 @@
               <div class="field">
                 <label>Résolution cible</label>
                 <div class="quality-pills" id="resPills">
-                  <div class="quality-pill" data-res="720" onclick="selectRes(this)">720p</div>
-                  <div class="quality-pill active" data-res="1080" onclick="selectRes(this)">1080p</div>
-                  <div class="quality-pill" data-res="1440" onclick="selectRes(this)">1440p</div>
+                  <div class="quality-pill" data-res="720">720p</div>
+                  <div class="quality-pill active" data-res="1080">1080p</div>
+                  <div class="quality-pill" data-res="1440">1440p</div>
                 </div>
               </div>
               <div class="field">
                 <label>Fréquence d'images (FPS)</label>
                 <div class="quality-pills" id="fpsPills">
-                  <div class="quality-pill" data-fps="30" onclick="selectFps(this)">30 fps</div>
-                  <div class="quality-pill active" data-fps="60" onclick="selectFps(this)">60 fps</div>
+                  <div class="quality-pill" data-fps="30">30 fps</div>
+                  <div class="quality-pill active" data-fps="60">60 fps</div>
                 </div>
               </div>
               <div class="field">
                 <label>Débit vidéo</label>
                 <div class="quality-pills" id="bitratePills">
-                  <div class="quality-pill" data-bitrate="4000000" onclick="selectBitrate(this)">4 Mbps</div>
-                  <div class="quality-pill active" data-bitrate="8000000" onclick="selectBitrate(this)">8 Mbps</div>
-                  <div class="quality-pill" data-bitrate="15000000" onclick="selectBitrate(this)">15 Mbps</div>
+                  <div class="quality-pill" data-bitrate="4000000">4 Mbps</div>
+                  <div class="quality-pill active" data-bitrate="8000000">8 Mbps</div>
+                  <div class="quality-pill" data-bitrate="15000000">15 Mbps</div>
                 </div>
               </div>
             </div>
@@ -895,7 +895,7 @@
                 <label>Code de session</label>
                 <div class="room-code-box">
                   <span class="room-code" id="roomCodeDisplay">—</span>
-                  <button class="copy-btn" onclick="copyRoomCode()">Copier</button>
+                  <button class="copy-btn" id="copyCodeBtn">Copier</button>
                 </div>
               </div>
               <div class="field">
@@ -904,10 +904,10 @@
               </div>
             </div>
             <div style="display:flex; flex-direction:column; gap:8px; justify-content:flex-end">
-              <button class="btn btn-primary btn-full" id="startBtn" onclick="startSharing()">
+              <button class="btn btn-primary btn-full" id="startBtn">
                 📡 Démarrer le partage
               </button>
-              <button class="btn btn-danger btn-full" id="stopBtn" onclick="stopSharing()" style="display:none">
+              <button class="btn btn-danger btn-full" id="stopBtn" style="display:none">
                 ⏹ Arrêter le partage
               </button>
             </div>
@@ -960,13 +960,13 @@
             <div style="display:flex; flex-direction:column; gap:12px">
               <div class="field">
                 <label>Code de session</label>
-                <input class="input" id="joinCodeInput" placeholder="Ex: ABC-123" oninput="this.value=this.value.toUpperCase()">
+                <input class="input" id="joinCodeInput" placeholder="Ex: ABC-123">
               </div>
               <div class="field">
                 <label>Adresse du serveur (IP ou localhost)</label>
                 <input class="input" id="joinHostInput" placeholder="192.168.1.x ou localhost">
               </div>
-              <button class="btn btn-primary btn-full" id="joinBtn" onclick="joinSession()">
+              <button class="btn btn-primary btn-full" id="joinBtn">
                 📥 Rejoindre la session
               </button>
             </div>
@@ -991,8 +991,8 @@
           <div class="card-header">
             <div class="card-icon pink">📺</div>
             <div class="card-title">Flux reçu</div>
-            <button class="btn btn-ghost" id="fullscreenBtn" style="margin-left:auto;padding:6px 12px;font-size:11px" onclick="toggleFullscreen()">⛶ Plein écran</button>
-            <button class="btn btn-danger" style="padding:6px 12px;font-size:11px" onclick="leaveSession()">✕ Quitter</button>
+            <button class="btn btn-ghost" id="fullscreenBtn" style="margin-left:auto;padding:6px 12px;font-size:11px">⛶ Plein écran</button>
+            <button class="btn btn-danger" id="leaveBtn" style="padding:6px 12px;font-size:11px">✕ Quitter</button>
           </div>
           <div class="preview-container" id="remoteContainer">
             <video id="remoteVideo" autoplay playsinline></video>
