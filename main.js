@@ -1,3 +1,4 @@
+require('dotenv').config();
 const { app, BrowserWindow, ipcMain, desktopCapturer, screen, session, clipboard } = require('electron');
 const path = require('path');
 const http = require('http');

@@ -17,6 +17,7 @@
     "build:all": "electron-builder --win nsis portable"
   },
   "dependencies": {
+    "dotenv": "^17.4.0",
     "ws": "^8.16.0"
   },
   "devDependencies": {
@@ -26,7 +27,9 @@
   "build": {
     "appId": "com.screenshare.app",
     "productName": "ScreenShare Pro",
-    "directories": { "output": "dist" },
+    "directories": {
+      "output": "dist"
+    },
     "win": {
       "target": [
         "nsis",
