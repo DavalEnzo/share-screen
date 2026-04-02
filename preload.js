@@ -5,7 +5,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getLocalIp: () => ipcRenderer.invoke('get-local-ip'),
   getSignalingPort: () => ipcRenderer.invoke('get-signaling-port'),
   getRuntimeConfig: () => ({
-    remoteSignalingUrl: process.env.REMOTE_SIGNALING_URL || ''
+    remoteSignalingUrl: process.env.REMOTE_SIGNALING_URL || '',
+    turnHost: process.env.TURN_HOST || '',
+    turnPort: process.env.TURN_PORT || '',
+    turnUsername: process.env.TURN_USERNAME || '',
+    turnPassword: process.env.TURN_PASSWORD || '',
   }),
   copyToClipboard: (text) => ipcRenderer.invoke('clipboard-write-text', String(text || '')),
   minimizeWindow: () => ipcRenderer.send('window-minimize'),

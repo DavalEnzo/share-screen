@@ -39,31 +39,13 @@ const state = {
   receiverJoinHost: 'localhost',
 };
 
-// ─── ICE config (STUN public + TURN Metered.ca gratuit) ──────────────────────
-// 🔧 Après inscription sur https://www.metered.ca/tools/openrelay/
-//    remplace les credentials TURN ci-dessous par les tiens.
+// ─── ICE config (STUN public + TURN via .env) ───────────────────────────────
 const ICE_CONFIG = {
   iceServers: [
     // STUN Google (fonctionne pour ~70% des connexions)
     { urls: 'stun:stun.l.google.com:19302' },
     { urls: 'stun:stun1.l.google.com:19302' },
-    // TURN OpenRelay (Metered.ca — gratuit 500MB/mois)
-    // Décommenter après avoir créé un compte sur metered.ca :
-    // {
-    //   urls: 'turn:openrelay.metered.ca:80',
-    //   username: 'openrelayproject',
-    //   credential: 'openrelayproject',
-    // },
-    // {
-    //   urls: 'turn:openrelay.metered.ca:443',
-    //   username: 'openrelayproject',
-    //   credential: 'openrelayproject',
-    // },
-    // {
-    //   urls: 'turn:openrelay.metered.ca:443?transport=tcp',
-    //   username: 'openrelayproject',
-    //   credential: 'openrelayproject',
-    // },
+    // Les serveurs TURN sont ajoutés dynamiquement depuis getRuntimeConfig()
   ]
 };
 
@@ -81,6 +63,17 @@ async function init() {
   const runtimeConfig = window.electronAPI.getRuntimeConfig ? window.electronAPI.getRuntimeConfig() : {};
   if (runtimeConfig.remoteSignalingUrl) {
     remoteSignalingUrl = runtimeConfig.remoteSignalingUrl.trim();
+  }
+
+  if (runtimeConfig.turnHost && runtimeConfig.turnPort && runtimeConfig.turnUsername && runtimeConfig.turnPassword) {
+    ICE_CONFIG.iceServers.push({
+      urls: [
+        `turn:${runtimeConfig.turnHost}:${runtimeConfig.turnPort}?transport=udp`,
+        `turn:${runtimeConfig.turnHost}:${runtimeConfig.turnPort}?transport=tcp`,
+      ],
+      username: runtimeConfig.turnUsername,
+      credential: runtimeConfig.turnPassword,
+    });
   }
 
   const [ip, port] = await Promise.all([
