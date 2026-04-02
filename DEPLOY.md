@@ -73,6 +73,12 @@ const REMOTE_SIGNALING_URL = 'wss://screenshare-server-production.up.railway.app
 
 > ⚠️ Utiliser `wss://` (avec S) car Railway fournit le TLS automatiquement.
 
+Alternative sans modifier le code : definir la variable d'environnement au lancement.
+
+```powershell
+$env:REMOTE_SIGNALING_URL="wss://screenshare-server-production.up.railway.app"; npm start
+```
+
 **2.2 Activer les TURN servers (optionnel mais recommandé)**
 
 → Créer un compte gratuit sur https://www.metered.ca/tools/openrelay/

@@ -15,6 +15,26 @@ npm install
 npm start
 ```
 
+### Configuration optionnelle (serveur distant)
+
+Par defaut, l'app utilise l'URL definie dans `renderer.js`.
+Pour la surcharger sans modifier le code, definissez `REMOTE_SIGNALING_URL` au lancement:
+
+```bash
+# PowerShell
+$env:REMOTE_SIGNALING_URL="wss://votre-projet.up.railway.app"; npm start
+```
+
+### Modes de lancement
+
+```bash
+# Mode recommande (securise)
+npm start
+
+# Mode legacy de depannage (non recommande)
+npm run start:unsafe
+```
+
 ## 📁 Structure des fichiers
 
 ```
