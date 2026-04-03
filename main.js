@@ -145,11 +145,19 @@ function startSignalingServer() {
       mode: payload.mode,
     });
 
+    const hostContactsRes = authStore.getContacts(username);
+    const hostContacts = hostContactsRes.ok && Array.isArray(hostContactsRes.contacts)
+      ? hostContactsRes.contacts
+      : [];
+
     const allUsers = authStore.getAllUsernames();
     for (const watcherName of allUsers) {
       const res = authStore.getContacts(watcherName);
       if (!res.ok) continue;
       if (!res.contacts || !res.contacts.includes(username)) continue;
+
+      // Statut visible uniquement si la relation est mutuelle
+      if (!hostContacts.includes(watcherName)) continue;
 
       const sessions = userSessions.get(watcherName);
       if (!sessions) continue;
@@ -169,7 +177,24 @@ function startSignalingServer() {
     }
 
     const contacts = res.contacts || [];
-    const list = contacts.map((name) => buildStatusPayload(name));
+    const list = contacts.map((name) => {
+      const payload = buildStatusPayload(name);
+
+      const otherRes = authStore.getContacts(name);
+      const otherContacts = otherRes.ok && Array.isArray(otherRes.contacts)
+        ? otherRes.contacts
+        : [];
+      const mutual = otherContacts.includes(username);
+
+      if (!mutual) {
+        payload.online = false;
+        payload.sharing = false;
+        payload.roomCode = null;
+        payload.host = null;
+      }
+
+      return payload;
+    });
     ws.send(JSON.stringify({ type: 'contacts-list', contacts: list }));
   }
 
@@ -491,6 +516,13 @@ function startSignalingServer() {
           }
           const contacts = (res.contacts || []).map((name) => buildStatusPayload(name));
           ws.send(JSON.stringify({ type: 'contacts-list', contacts }));
+          if (contactName) {
+            broadcastToUserSessions(contactName, (client) => {
+              sendContactsList(contactName, client);
+            });
+            notifyContactsOfStatus(username);
+            notifyContactsOfStatus(contactName);
+          }
           break;
         }
 

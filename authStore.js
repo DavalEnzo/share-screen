@@ -163,7 +163,17 @@ function removeContact(ownerName, contactName) {
     return { ok: false, error: 'Utilisateur introuvable.' };
   }
 
+  // Suppression unilatérale : seul "owner" enlève "contact" de sa liste
   ownerRecord.contacts = ownerRecord.contacts.filter(c => c !== contact);
+
+  // Nettoyer d'éventuelles demandes d'amis côté owner
+  if (ownerRecord.incomingRequests) {
+    ownerRecord.incomingRequests = ownerRecord.incomingRequests.filter(u => u !== contact);
+  }
+  if (ownerRecord.outgoingRequests) {
+    ownerRecord.outgoingRequests = ownerRecord.outgoingRequests.filter(u => u !== contact);
+  }
+
   persistStore();
 
   return { ok: true, contacts: [...ownerRecord.contacts] };
