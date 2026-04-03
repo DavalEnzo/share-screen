@@ -1,5 +1,14 @@
 require('dotenv').config();
 const { app, BrowserWindow, ipcMain, desktopCapturer, screen, session, clipboard } = require('electron');
+
+// Réduire l'influence de la vsync et du throttling de fond sur le partage.
+// Attention : ça ne désactive pas G-SYNC/FreeSync au niveau du driver,
+// mais ça évite que la fenêtre Electron soit trop pénalisée en arrière-plan.
+app.commandLine.appendSwitch('disable-gpu-vsync');
+app.commandLine.appendSwitch('disable-frame-rate-limit');
+app.commandLine.appendSwitch('disable-background-timer-throttling');
+app.commandLine.appendSwitch('disable-renderer-backgrounding');
+app.commandLine.appendSwitch('disable-backgrounding-occluded-windows');
 const path = require('path');
 const http = require('http');
 const { Server } = require('ws');
@@ -22,7 +31,10 @@ function createWindow() {
       nodeIntegration: false,
       contextIsolation: true,
       preload: path.join(__dirname, 'preload.js'),
-      webSecurity: true
+      webSecurity: true,
+      // Ne pas ralentir les timers / rafraîchissement quand la fenêtre est
+      // minimisée ou en arrière-plan, pour garder des FPS stables côté partage.
+      backgroundThrottling: false
     },
     show: false
   });

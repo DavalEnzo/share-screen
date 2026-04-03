@@ -196,6 +196,37 @@ function selectBitrate(el) {
   state.bitrate = parseInt(el.dataset.bitrate);
 }
 
+function selectPreset(el) {
+  document.querySelectorAll('#presetPills .quality-pill').forEach(p => p.classList.remove('active'));
+  el.classList.add('active');
+
+  const res = parseInt(el.dataset.res || '0', 10);
+  const fps = parseInt(el.dataset.fps || '0', 10);
+  const bitrate = parseInt(el.dataset.bitrate || '0', 10);
+
+  if (!Number.isNaN(res) && res > 0) {
+    const resEl = document.querySelector(`#resPills .quality-pill[data-res="${res}"]`);
+    if (resEl) selectRes(resEl);
+  }
+
+  if (!Number.isNaN(fps) && fps > 0) {
+    const fpsEl = document.querySelector(`#fpsPills .quality-pill[data-fps="${fps}"]`);
+    if (fpsEl) selectFps(fpsEl);
+  }
+
+  if (!Number.isNaN(bitrate) && bitrate > 0) {
+    const brEl = document.querySelector(`#bitratePills .quality-pill[data-bitrate="${bitrate}"]`);
+    if (brEl) selectBitrate(brEl);
+  }
+
+  if (Object.prototype.hasOwnProperty.call(el.dataset, 'lowlatency')) {
+    const lowLatencyCheckbox = document.getElementById('lowLatencyMode');
+    if (lowLatencyCheckbox) {
+      lowLatencyCheckbox.checked = el.dataset.lowlatency === '1';
+    }
+  }
+}
+
 // ─── Sources ──────────────────────────────────────────────────────────────────
 async function loadSources() {
   const grid = document.getElementById('sourcesGrid');
@@ -502,7 +533,7 @@ function openBroadcasterSignaling(role, isReconnect) {
 function scheduleBroadcasterReconnect(role) {
   if (state.signalingReconnectTimer) return;
 
-  const maxAttempts = 6;
+  const maxAttempts = 3;
   const attempt = state.signalingReconnectAttempts + 1;
   if (attempt > maxAttempts) {
     notify('Serveur de signalisation indisponible. Arrêt du partage.', 'error');
@@ -518,6 +549,28 @@ function scheduleBroadcasterReconnect(role) {
     state.signalingReconnectTimer = null;
     openBroadcasterSignaling(role, true);
   }, delayMs);
+}
+
+function preferH264(pc) {
+  if (typeof RTCRtpSender === 'undefined' || !RTCRtpSender.getCapabilities) return;
+  const caps = RTCRtpSender.getCapabilities('video');
+  if (!caps || !Array.isArray(caps.codecs)) return;
+
+  const codecs = caps.codecs;
+  const h264 = codecs.filter(c => (c.mimeType || '').toLowerCase() === 'video/h264');
+  if (!h264.length) return;
+  const others = codecs.filter(c => (c.mimeType || '').toLowerCase() !== 'video/h264');
+  const preferred = [...h264, ...others];
+
+  pc.getTransceivers().forEach(t => {
+    if (t.sender && t.sender.track && t.sender.track.kind === 'video' && typeof t.setCodecPreferences === 'function') {
+      try {
+        t.setCodecPreferences(preferred);
+      } catch (_) {
+        // Ignore if not supported
+      }
+    }
+  });
 }
 
 async function createBroadcasterPeer(peerId) {
@@ -560,6 +613,8 @@ async function createBroadcasterPeer(peerId) {
       state.peerConnections.delete(peerId);
     }
   };
+
+  preferH264(pc);
 
   const offer = await pc.createOffer({ offerToReceiveVideo: false, offerToReceiveAudio: false });
   await pc.setLocalDescription(offer);
@@ -634,7 +689,6 @@ function connectReceiverSignaling(isReconnect) {
 
   state.receiverWs.onopen = () => {
     if (!state.receiverShouldReconnect) return;
-    state.receiverReconnectAttempts = 0;
     document.getElementById('joinBtn').disabled = true;
     document.getElementById('joinBtn').textContent = isReconnect ? 'Reconnexion...' : 'Connexion...';
     state.receiverWs.send(JSON.stringify({ type: 'join', room: state.receiverJoinCode, role: 'viewer' }));
@@ -692,7 +746,7 @@ function connectReceiverSignaling(isReconnect) {
 function scheduleReceiverReconnect() {
   if (!state.receiverShouldReconnect || state.receiverReconnectTimer) return;
 
-  const maxAttempts = 8;
+  const maxAttempts = 3;
   const attempt = state.receiverReconnectAttempts + 1;
   if (attempt > maxAttempts) {
     notify('Impossible de rétablir la connexion.', 'error');
@@ -963,6 +1017,9 @@ function setupUiBindings() {
   });
   document.querySelectorAll('#bitratePills .quality-pill').forEach(el => {
     el.addEventListener('click', () => selectBitrate(el));
+  });
+  document.querySelectorAll('#presetPills .quality-pill').forEach(el => {
+    el.addEventListener('click', () => selectPreset(el));
   });
 }
 

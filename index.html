@@ -827,6 +827,14 @@
             </div>
             <div style="display:flex; flex-direction:column; gap:12px">
               <div class="field">
+                <label>Profil qualité</label>
+                <div class="quality-pills" id="presetPills">
+                  <div class="quality-pill active" data-res="1080" data-fps="60" data-bitrate="8000000">Standard</div>
+                  <div class="quality-pill" data-res="1440" data-fps="60" data-bitrate="40000000">Qualité max</div>
+                  <div class="quality-pill" data-res="720" data-fps="60" data-bitrate="8000000" data-lowlatency="1">Faible latence</div>
+                </div>
+              </div>
+              <div class="field">
                 <label>Résolution cible</label>
                 <div class="quality-pills" id="resPills">
                   <div class="quality-pill" data-res="720">720p</div>
@@ -847,6 +855,8 @@
                   <div class="quality-pill" data-bitrate="4000000">4 Mbps</div>
                   <div class="quality-pill active" data-bitrate="8000000">8 Mbps</div>
                   <div class="quality-pill" data-bitrate="15000000">15 Mbps</div>
+                  <div class="quality-pill" data-bitrate="25000000">25 Mbps</div>
+                  <div class="quality-pill" data-bitrate="40000000">40 Mbps</div>
                 </div>
               </div>
             </div>
