@@ -222,6 +222,21 @@ wss.on('connection', (ws, req) => {
     switch (msg.type) {
 
       // ─── Authentification & contacts ──────────────────────────────────────
+      case 'attach-user': {
+        const rawUser = (msg.username || msg.user || '').toString().trim().toLowerCase();
+        if (!rawUser) break;
+
+        let finalUser = rawUser;
+        if (typeof authStore.getUser === 'function') {
+          const existing = authStore.getUser(rawUser);
+          if (existing && existing.username) {
+            finalUser = existing.username;
+          }
+        }
+        bindUser(finalUser);
+        break;
+      }
+
       case 'register': {
         const { username: rawUser, password } = msg;
         const result = authStore.registerUser(rawUser, password);

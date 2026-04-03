@@ -111,8 +111,13 @@ async function getIceConfig() {
   return { iceServers };
 }
 
-// URL dédiée pour l'auth/contacts : toujours le serveur local intégré
+// URL dédiée pour l'auth/contacts
+// - en mode distant : même serveur que la signalisation distante (Railway)
+// - sinon : serveur local intégré Electron
 function getAuthWebSocketUrl() {
+  if (useRemoteSignaling() && remoteSignalingUrl) {
+    return remoteSignalingUrl;
+  }
   const port = state.signalingPort || 8765;
   return `ws://localhost:${port}`;
 }
@@ -892,6 +897,13 @@ function openBroadcasterSignaling(role, isReconnect) {
       notify('Signalisation rétablie. Les spectateurs peuvent se reconnecter.', 'success');
     }
 
+    // Associer la connexion de signalisation au compte courant
+    if (state.currentUser && state.currentUser.username) {
+      try {
+        state.signalingWs.send(JSON.stringify({ type: 'attach-user', username: state.currentUser.username }));
+      } catch (_) {}
+    }
+
     state.signalingWs.send(JSON.stringify({ type: 'join', room: state.roomCode, role }));
   };
 
@@ -1115,6 +1127,11 @@ function connectReceiverSignaling(isReconnect) {
     if (!state.receiverShouldReconnect) return;
     document.getElementById('joinBtn').disabled = true;
     document.getElementById('joinBtn').textContent = isReconnect ? 'Reconnexion...' : 'Connexion...';
+    if (state.currentUser && state.currentUser.username) {
+      try {
+        state.receiverWs.send(JSON.stringify({ type: 'attach-user', username: state.currentUser.username }));
+      } catch (_) {}
+    }
     state.receiverWs.send(JSON.stringify({ type: 'join', room: state.receiverJoinCode, role: 'viewer' }));
     startReceiverOfferTimeout();
   };

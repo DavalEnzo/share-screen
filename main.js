@@ -1,5 +1,6 @@
 require('dotenv').config();
 const { app, BrowserWindow, ipcMain, desktopCapturer, screen, session, clipboard } = require('electron');
+const DEFAULT_REMOTE_SIGNALING_URL = 'wss://share-screen-production.up.railway.app';
 
 // Réduire l'influence de la vsync et du throttling de fond sur le partage.
 // Attention : ça ne désactive pas G-SYNC/FreeSync au niveau du driver,
@@ -234,6 +235,21 @@ function startSignalingServer() {
       switch (msg.type) {
 
         // Authentification & contacts
+        case 'attach-user': {
+          const rawUser = (msg.username || msg.user || '').toString().trim().toLowerCase();
+          if (!rawUser) break;
+
+          let finalUser = rawUser;
+          if (typeof authStore.getUser === 'function') {
+            const existing = authStore.getUser(rawUser);
+            if (existing && existing.username) {
+              finalUser = existing.username;
+            }
+          }
+          bindUser(finalUser);
+          break;
+        }
+
         case 'register': {
           const { username: rawUser, password } = msg;
           const result = authStore.registerUser(rawUser, password);
@@ -534,7 +550,7 @@ ipcMain.handle('clipboard-write-text', (_event, text) => {
 });
 
 ipcMain.handle('get-turn-credentials', async () => {
-  const base = process.env.REMOTE_SIGNALING_URL;
+  const base = process.env.REMOTE_SIGNALING_URL || DEFAULT_REMOTE_SIGNALING_URL;
   if (!base) return null;
 
   try {
