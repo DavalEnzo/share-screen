@@ -1130,14 +1130,27 @@
             </div>
             <div style="display:flex; flex-direction:column; gap:10px">
               <div class="field">
-                <label>Ajouter un contact (nom d'utilisateur)</label>
+                <label>Envoyer une demande d'ami (nom d'utilisateur)</label>
                 <div style="display:flex; gap:8px">
                   <input class="input" id="newContactInput" placeholder="ex: alice">
-                  <button class="btn btn-primary" id="addContactBtn" style="padding:8px 14px;font-size:11px;flex-shrink:0">Ajouter</button>
+                  <button class="btn btn-primary" id="addContactBtn" style="padding:8px 14px;font-size:11px;flex-shrink:0">Envoyer</button>
                 </div>
               </div>
               <div id="contactsList" style="margin-top:4px">
                 <div class="contact-list-empty">Connectez-vous pour voir vos contacts.</div>
+              </div>
+              <div class="divider"></div>
+              <div class="field">
+                <label>Demandes reçues</label>
+                <div id="incomingRequestsList" style="margin-top:4px">
+                  <div class="contact-list-empty">Connectez-vous pour voir vos demandes.</div>
+                </div>
+              </div>
+              <div class="field">
+                <label>Demandes envoyées</label>
+                <div id="outgoingRequestsList" style="margin-top:4px">
+                  <div class="contact-list-empty">Connectez-vous pour voir vos demandes.</div>
+                </div>
               </div>
             </div>
           </div>

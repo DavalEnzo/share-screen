@@ -35,6 +35,8 @@ const state = {
   authPendingMessage: null,
   currentUser: null,
   contacts: [],
+  friendIncoming: [],
+  friendOutgoing: [],
   // Receiver
   receiverPc: null,
   receiverWs: null,
@@ -370,6 +372,99 @@ function renderContactsList() {
   });
 }
 
+function renderFriendRequests() {
+  const incomingEl = document.getElementById('incomingRequestsList');
+  const outgoingEl = document.getElementById('outgoingRequestsList');
+  if (!incomingEl || !outgoingEl) return;
+
+  incomingEl.innerHTML = '';
+  outgoingEl.innerHTML = '';
+
+  if (!state.currentUser) {
+    incomingEl.innerHTML = '<div class="contact-list-empty">Connectez-vous pour voir vos demandes.</div>';
+    outgoingEl.innerHTML = '<div class="contact-list-empty">Connectez-vous pour voir vos demandes.</div>';
+    return;
+  }
+
+  const incoming = [...(state.friendIncoming || [])].sort((a, b) => a.localeCompare(b));
+  const outgoing = [...(state.friendOutgoing || [])].sort((a, b) => a.localeCompare(b));
+
+  if (incoming.length === 0) {
+    incomingEl.innerHTML = '<div class="contact-list-empty">Aucune demande reçue.</div>';
+  } else {
+    incoming.forEach(name => {
+      const row = document.createElement('div');
+      row.className = 'contact-row';
+
+      const main = document.createElement('div');
+      main.className = 'contact-main';
+
+      const nameSpan = document.createElement('div');
+      nameSpan.className = 'contact-name';
+      nameSpan.textContent = name;
+
+      const statusSpan = document.createElement('div');
+      statusSpan.className = 'contact-status-text';
+      statusSpan.textContent = 'Demande reçue';
+
+      main.appendChild(nameSpan);
+      main.appendChild(statusSpan);
+
+      const actions = document.createElement('div');
+      actions.className = 'contact-actions';
+
+      const acceptBtn = document.createElement('button');
+      acceptBtn.className = 'btn btn-primary';
+      acceptBtn.style.padding = '4px 10px';
+      acceptBtn.style.fontSize = '11px';
+      acceptBtn.dataset.action = 'accept-request';
+      acceptBtn.dataset.username = name;
+      acceptBtn.textContent = 'Accepter';
+
+      const rejectBtn = document.createElement('button');
+      rejectBtn.className = 'btn btn-ghost';
+      rejectBtn.style.padding = '4px 8px';
+      rejectBtn.style.fontSize = '11px';
+      rejectBtn.dataset.action = 'reject-request';
+      rejectBtn.dataset.username = name;
+      rejectBtn.textContent = 'Refuser';
+
+      actions.appendChild(acceptBtn);
+      actions.appendChild(rejectBtn);
+
+      row.appendChild(main);
+      row.appendChild(actions);
+      incomingEl.appendChild(row);
+    });
+  }
+
+  if (outgoing.length === 0) {
+    outgoingEl.innerHTML = '<div class="contact-list-empty">Aucune demande envoyée.</div>';
+  } else {
+    outgoing.forEach(name => {
+      const row = document.createElement('div');
+      row.className = 'contact-row';
+
+      const main = document.createElement('div');
+      main.className = 'contact-main';
+
+      const nameSpan = document.createElement('div');
+      nameSpan.className = 'contact-name';
+      nameSpan.textContent = name;
+
+      const statusSpan = document.createElement('div');
+      statusSpan.className = 'contact-status-text';
+      statusSpan.textContent = 'En attente...';
+
+      main.appendChild(nameSpan);
+      main.appendChild(statusSpan);
+
+      row.appendChild(main);
+      outgoingEl.appendChild(row);
+    });
+  }
+}
+
 function sendPresenceInfo() {
   if (!state.currentUser || !state.authWs || state.authWs.readyState !== WebSocket.OPEN) return;
   const msg = {
@@ -419,8 +514,11 @@ function openAuthWebSocket() {
       state.contacts = Array.isArray(msg.contacts)
         ? msg.contacts.map(canonicalContact).filter(Boolean)
         : [];
+      state.friendIncoming = Array.isArray(msg.incomingRequests) ? msg.incomingRequests : [];
+      state.friendOutgoing = Array.isArray(msg.outgoingRequests) ? msg.outgoingRequests : [];
       setAuthStatus(`Connecté en tant que ${msg.username}`, 'success');
       renderContactsList();
+      renderFriendRequests();
       sendPresenceInfo();
       return;
     }
@@ -434,8 +532,11 @@ function openAuthWebSocket() {
     if (msg.type === 'auth-logged-out') {
       state.currentUser = null;
       state.contacts = [];
+      state.friendIncoming = [];
+      state.friendOutgoing = [];
       setAuthStatus('Non connecté.', 'info');
       renderContactsList();
+      renderFriendRequests();
       return;
     }
 
@@ -455,6 +556,63 @@ function openAuthWebSocket() {
     if (msg.type === 'contact-status') {
       upsertContactFromStatus(msg);
       renderContactsList();
+      return;
+    }
+
+    if (msg.type === 'friend-requests') {
+      state.friendIncoming = Array.isArray(msg.incoming) ? msg.incoming : [];
+      state.friendOutgoing = Array.isArray(msg.outgoing) ? msg.outgoing : [];
+      renderFriendRequests();
+      return;
+    }
+
+    if (msg.type === 'friend-request-incoming') {
+      const from = (msg.from || '').toString();
+      if (from && !state.friendIncoming.includes(from)) {
+        state.friendIncoming.push(from);
+      }
+      renderFriendRequests();
+      notify(`${from} vous a envoyé une demande d'ami.`, 'info');
+      return;
+    }
+
+    if (msg.type === 'friend-request-sent') {
+      const to = (msg.to || '').toString();
+      if (to && !state.friendOutgoing.includes(to)) {
+        state.friendOutgoing.push(to);
+      }
+      renderFriendRequests();
+      if (msg.autoAccepted) {
+        notify(`Demande d'ami avec ${to} acceptée automatiquement.`, 'success');
+      } else {
+        notify(`Demande d'ami envoyée à ${to}.`, 'success');
+      }
+      return;
+    }
+
+    if (msg.type === 'friend-request-accepted') {
+      const other = (msg.from || '').toString();
+      if (other) {
+        state.friendIncoming = state.friendIncoming.filter(u => u !== other);
+        state.friendOutgoing = state.friendOutgoing.filter(u => u !== other);
+        renderFriendRequests();
+        notify(`${other} est maintenant dans vos contacts.`, 'success');
+      }
+      return;
+    }
+
+    if (msg.type === 'friend-request-rejected') {
+      const other = (msg.from || '').toString();
+      if (other) {
+        state.friendOutgoing = state.friendOutgoing.filter(u => u !== other);
+        renderFriendRequests();
+        notify(`${other} a refusé votre demande d'ami.`, 'info');
+      }
+      return;
+    }
+
+    if (msg.type === 'friend-error') {
+      notify(msg.message || 'Erreur demande d\'amis.', 'error');
       return;
     }
   };
@@ -545,8 +703,22 @@ function handleAddContact() {
     notify('Entrez un nom d\'utilisateur à ajouter.', 'error');
     return;
   }
-  ensureAuthConnectionAndSend({ type: 'add-contact', contact: name });
+  ensureAuthConnectionAndSend({ type: 'friend-request', target: name });
   input.value = '';
+}
+
+function handleFriendRequestsClick(event) {
+  const target = event.target.closest('[data-action]');
+  if (!target) return;
+  const action = target.dataset.action;
+  const username = target.dataset.username;
+  if (!username || !state.currentUser) return;
+
+  if (action === 'accept-request') {
+    ensureAuthConnectionAndSend({ type: 'friend-accept', from: username });
+  } else if (action === 'reject-request') {
+    ensureAuthConnectionAndSend({ type: 'friend-reject', from: username });
+  }
 }
 
 function handleContactsListClick(event) {
@@ -1452,6 +1624,8 @@ function setupUiBindings() {
   document.getElementById('authRegisterBtn')?.addEventListener('click', handleAuthRegister);
   document.getElementById('addContactBtn')?.addEventListener('click', handleAddContact);
   document.getElementById('contactsList')?.addEventListener('click', handleContactsListClick);
+  document.getElementById('incomingRequestsList')?.addEventListener('click', handleFriendRequestsClick);
+  document.getElementById('outgoingRequestsList')?.addEventListener('click', handleFriendRequestsClick);
 
   document.getElementById('joinCodeInput')?.addEventListener('input', (event) => {
     event.target.value = event.target.value.toUpperCase();

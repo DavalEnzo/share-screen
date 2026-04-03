@@ -14,6 +14,24 @@ const STORE_PATH = path.join(__dirname, 'users.json');
  */
 let store = { users: {} };
 
+function ensureUserStructure(username) {
+  const u = normalizeUsername(username);
+  const record = store.users[u];
+  if (!record) return null;
+
+  if (!Array.isArray(record.contacts)) {
+    record.contacts = record.contacts ? Array.from(record.contacts) : [];
+  }
+  if (!Array.isArray(record.incomingRequests)) {
+    record.incomingRequests = [];
+  }
+  if (!Array.isArray(record.outgoingRequests)) {
+    record.outgoingRequests = [];
+  }
+
+  return record;
+}
+
 function loadStore() {
   try {
     if (fs.existsSync(STORE_PATH)) {
@@ -62,7 +80,13 @@ function registerUser(username, password) {
   const salt = crypto.randomBytes(16).toString('hex');
   const passwordHash = hashPassword(pwd, salt);
 
-  store.users[u] = { passwordHash, salt, contacts: [] };
+  store.users[u] = {
+    passwordHash,
+    salt,
+    contacts: [],
+    incomingRequests: [],
+    outgoingRequests: [],
+  };
   persistStore();
 
   return { ok: true, user: { username: u, contacts: [] } };
@@ -71,7 +95,7 @@ function registerUser(username, password) {
 function validateUser(username, password) {
   const u = normalizeUsername(username);
   const pwd = String(password || '');
-  const record = store.users[u];
+  const record = ensureUserStructure(u);
 
   if (!record) {
     return { ok: false, error: 'Utilisateur introuvable.' };
@@ -87,9 +111,14 @@ function validateUser(username, password) {
 
 function getUser(username) {
   const u = normalizeUsername(username);
-  const record = store.users[u];
+  const record = ensureUserStructure(u);
   if (!record) return null;
-  return { username: u, contacts: [...(record.contacts || [])] };
+  return {
+    username: u,
+    contacts: [...(record.contacts || [])],
+    incomingRequests: [...(record.incomingRequests || [])],
+    outgoingRequests: [...(record.outgoingRequests || [])],
+  };
 }
 
 function getContacts(username) {
@@ -106,8 +135,8 @@ function addContact(ownerName, contactName) {
     return { ok: false, error: 'Contact invalide.' };
   }
 
-  const ownerRecord = store.users[owner];
-  const contactRecord = store.users[contact];
+  const ownerRecord = ensureUserStructure(owner);
+  const contactRecord = ensureUserStructure(contact);
 
   if (!ownerRecord) {
     return { ok: false, error: 'Utilisateur introuvable.' };
@@ -129,7 +158,7 @@ function removeContact(ownerName, contactName) {
   const owner = normalizeUsername(ownerName);
   const contact = normalizeUsername(contactName);
 
-  const ownerRecord = store.users[owner];
+  const ownerRecord = ensureUserStructure(owner);
   if (!ownerRecord || !ownerRecord.contacts) {
     return { ok: false, error: 'Utilisateur introuvable.' };
   }
@@ -144,6 +173,125 @@ function getAllUsernames() {
   return Object.keys(store.users || {});
 }
 
+function getFriendRequests(username) {
+  const u = normalizeUsername(username);
+  const record = ensureUserStructure(u);
+  if (!record) return { ok: false, error: 'Utilisateur introuvable.' };
+  return {
+    ok: true,
+    incoming: [...(record.incomingRequests || [])],
+    outgoing: [...(record.outgoingRequests || [])],
+  };
+}
+
+function addContactPairInternal(a, b) {
+  const ra = ensureUserStructure(a);
+  const rb = ensureUserStructure(b);
+  if (!ra || !rb) return;
+
+  ra.contacts = ra.contacts || [];
+  rb.contacts = rb.contacts || [];
+
+  if (!ra.contacts.includes(b)) ra.contacts.push(b);
+  if (!rb.contacts.includes(a)) rb.contacts.push(a);
+}
+
+function sendFriendRequest(fromName, toName) {
+  const from = normalizeUsername(fromName);
+  const to = normalizeUsername(toName);
+
+  if (!from || !to || from === to) {
+    return { ok: false, error: 'Contact invalide.' };
+  }
+
+  const fromRecord = ensureUserStructure(from);
+  const toRecord = ensureUserStructure(to);
+
+  if (!fromRecord || !toRecord) {
+    return { ok: false, error: 'Utilisateur ou contact introuvable.' };
+  }
+
+  fromRecord.contacts = fromRecord.contacts || [];
+  toRecord.contacts = toRecord.contacts || [];
+
+  if (fromRecord.contacts.includes(to) || toRecord.contacts.includes(from)) {
+    return { ok: false, error: 'Déjà en contacts.' };
+  }
+
+  fromRecord.incomingRequests = fromRecord.incomingRequests || [];
+  fromRecord.outgoingRequests = fromRecord.outgoingRequests || [];
+  toRecord.incomingRequests = toRecord.incomingRequests || [];
+  toRecord.outgoingRequests = toRecord.outgoingRequests || [];
+
+  // Demande croisée déjà existante -> auto-acceptation
+  const hasCrossRequest =
+    fromRecord.incomingRequests.includes(to) ||
+    toRecord.outgoingRequests.includes(from);
+
+  if (hasCrossRequest) {
+    fromRecord.incomingRequests = fromRecord.incomingRequests.filter(u => u !== to);
+    fromRecord.outgoingRequests = fromRecord.outgoingRequests.filter(u => u !== to);
+    toRecord.incomingRequests = toRecord.incomingRequests.filter(u => u !== from);
+    toRecord.outgoingRequests = toRecord.outgoingRequests.filter(u => u !== from);
+
+    addContactPairInternal(from, to);
+    persistStore();
+    return { ok: true, autoAccepted: true };
+  }
+
+  if (!fromRecord.outgoingRequests.includes(to)) {
+    fromRecord.outgoingRequests.push(to);
+  }
+  if (!toRecord.incomingRequests.includes(from)) {
+    toRecord.incomingRequests.push(from);
+  }
+
+  persistStore();
+  return { ok: true, autoAccepted: false };
+}
+
+function acceptFriendRequest(username, fromName) {
+  const u = normalizeUsername(username);
+  const from = normalizeUsername(fromName);
+
+  const userRecord = ensureUserStructure(u);
+  const fromRecord = ensureUserStructure(from);
+  if (!userRecord || !fromRecord) {
+    return { ok: false, error: 'Utilisateur introuvable.' };
+  }
+
+  userRecord.incomingRequests = userRecord.incomingRequests || [];
+  fromRecord.outgoingRequests = fromRecord.outgoingRequests || [];
+
+  if (!userRecord.incomingRequests.includes(from)) {
+    return { ok: false, error: 'Aucune demande trouvée.' };
+  }
+
+  userRecord.incomingRequests = userRecord.incomingRequests.filter(u2 => u2 !== from);
+  fromRecord.outgoingRequests = fromRecord.outgoingRequests.filter(u2 => u2 !== u);
+
+  addContactPairInternal(u, from);
+  persistStore();
+  return { ok: true };
+}
+
+function rejectFriendRequest(username, fromName) {
+  const u = normalizeUsername(username);
+  const from = normalizeUsername(fromName);
+
+  const userRecord = ensureUserStructure(u);
+  const fromRecord = ensureUserStructure(from);
+  if (!userRecord || !fromRecord) {
+    return { ok: false, error: 'Utilisateur introuvable.' };
+  }
+
+  userRecord.incomingRequests = (userRecord.incomingRequests || []).filter(u2 => u2 !== from);
+  fromRecord.outgoingRequests = (fromRecord.outgoingRequests || []).filter(u2 => u2 !== u);
+
+  persistStore();
+  return { ok: true };
+}
+
 // Charger le store au démarrage
 loadStore();
 
@@ -155,4 +303,8 @@ module.exports = {
   addContact,
   removeContact,
   getAllUsernames,
+   getFriendRequests,
+   sendFriendRequest,
+   acceptFriendRequest,
+   rejectFriendRequest,
 };

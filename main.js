@@ -173,6 +173,41 @@ function startSignalingServer() {
     ws.send(JSON.stringify({ type: 'contacts-list', contacts: list }));
   }
 
+  function sendFriendRequests(username, ws) {
+    const res = authStore.getFriendRequests(username);
+    if (!res.ok) {
+      ws.send(JSON.stringify({ type: 'friend-error', message: res.error }));
+      return;
+    }
+    ws.send(JSON.stringify({
+      type: 'friend-requests',
+      incoming: res.incoming || [],
+      outgoing: res.outgoing || [],
+    }));
+  }
+
+  function broadcastToUserSessions(username, fn) {
+    const sessions = userSessions.get(username);
+    if (!sessions) return;
+    sessions.forEach((client) => {
+      if (client.readyState === 1) {
+        try { fn(client); } catch (_) {}
+      }
+    });
+  }
+
+  function notifyFriendRequests(username) {
+    const res = authStore.getFriendRequests(username);
+    if (!res.ok) return;
+    broadcastToUserSessions(username, (client) => {
+      client.send(JSON.stringify({
+        type: 'friend-requests',
+        incoming: res.incoming || [],
+        outgoing: res.outgoing || [],
+      }));
+    });
+  }
+
   setInterval(() => {
     for (const [code, members] of rooms) {
       if (members.size === 0) rooms.delete(code);
@@ -265,6 +300,8 @@ function startSignalingServer() {
             type: 'auth-ok',
             username: result.user.username,
             contacts,
+            incomingRequests: result.user.incomingRequests || [],
+            outgoingRequests: result.user.outgoingRequests || [],
             isNew: true,
           }));
           break;
@@ -285,6 +322,8 @@ function startSignalingServer() {
             type: 'auth-ok',
             username: result.user.username,
             contacts,
+            incomingRequests: result.user.incomingRequests || [],
+            outgoingRequests: result.user.outgoingRequests || [],
           }));
           break;
         }
@@ -309,6 +348,15 @@ function startSignalingServer() {
           break;
         }
 
+        case 'get-friend-requests': {
+          if (!username) {
+            ws.send(JSON.stringify({ type: 'auth-error', message: 'Non authentifié.' }));
+            break;
+          }
+          sendFriendRequests(username, ws);
+          break;
+        }
+
         case 'add-contact': {
           if (!username) {
             ws.send(JSON.stringify({ type: 'auth-error', message: 'Non authentifié.' }));
@@ -323,6 +371,110 @@ function startSignalingServer() {
           const contacts = (res.contacts || []).map((name) => buildStatusPayload(name));
           ws.send(JSON.stringify({ type: 'contacts-list', contacts }));
           notifyContactsOfStatus(username);
+          break;
+        }
+
+        case 'friend-request': {
+          if (!username) {
+            ws.send(JSON.stringify({ type: 'auth-error', message: 'Non authentifié.' }));
+            break;
+          }
+          const targetName = (msg.to || msg.target || msg.contact || msg.username || '').toString();
+          if (!targetName) {
+            ws.send(JSON.stringify({ type: 'friend-error', message: 'Nom de contact manquant.' }));
+            break;
+          }
+
+          const res = authStore.sendFriendRequest(username, targetName);
+          if (!res.ok) {
+            ws.send(JSON.stringify({ type: 'friend-error', message: res.error }));
+            break;
+          }
+
+          notifyFriendRequests(username);
+          notifyFriendRequests(targetName);
+
+          ws.send(JSON.stringify({ type: 'friend-request-sent', to: targetName, autoAccepted: !!res.autoAccepted }));
+
+          broadcastToUserSessions(targetName, (client) => {
+            client.send(JSON.stringify({ type: 'friend-request-incoming', from: username }));
+          });
+
+          if (res.autoAccepted) {
+            broadcastToUserSessions(username, (client) => {
+              sendContactsList(username, client);
+            });
+            broadcastToUserSessions(targetName, (client) => {
+              sendContactsList(targetName, client);
+            });
+            notifyContactsOfStatus(username);
+            notifyContactsOfStatus(targetName);
+          }
+          break;
+        }
+
+        case 'friend-accept': {
+          if (!username) {
+            ws.send(JSON.stringify({ type: 'auth-error', message: 'Non authentifié.' }));
+            break;
+          }
+          const fromName = (msg.from || msg.username || msg.contact || '').toString();
+          if (!fromName) {
+            ws.send(JSON.stringify({ type: 'friend-error', message: 'Nom de contact manquant.' }));
+            break;
+          }
+
+          const res = authStore.acceptFriendRequest(username, fromName);
+          if (!res.ok) {
+            ws.send(JSON.stringify({ type: 'friend-error', message: res.error }));
+            break;
+          }
+
+          notifyFriendRequests(username);
+          notifyFriendRequests(fromName);
+
+          broadcastToUserSessions(username, (client) => {
+            sendContactsList(username, client);
+          });
+          broadcastToUserSessions(fromName, (client) => {
+            sendContactsList(fromName, client);
+          });
+
+          broadcastToUserSessions(username, (client) => {
+            client.send(JSON.stringify({ type: 'friend-request-accepted', from: fromName }));
+          });
+          broadcastToUserSessions(fromName, (client) => {
+            client.send(JSON.stringify({ type: 'friend-request-accepted', from: username }));
+          });
+
+          notifyContactsOfStatus(username);
+          notifyContactsOfStatus(fromName);
+          break;
+        }
+
+        case 'friend-reject': {
+          if (!username) {
+            ws.send(JSON.stringify({ type: 'auth-error', message: 'Non authentifié.' }));
+            break;
+          }
+          const fromName = (msg.from || msg.username || msg.contact || '').toString();
+          if (!fromName) {
+            ws.send(JSON.stringify({ type: 'friend-error', message: 'Nom de contact manquant.' }));
+            break;
+          }
+
+          const res = authStore.rejectFriendRequest(username, fromName);
+          if (!res.ok) {
+            ws.send(JSON.stringify({ type: 'friend-error', message: res.error }));
+            break;
+          }
+
+          notifyFriendRequests(username);
+          notifyFriendRequests(fromName);
+
+          broadcastToUserSessions(fromName, (client) => {
+            client.send(JSON.stringify({ type: 'friend-request-rejected', from: username }));
+          });
           break;
         }
 
