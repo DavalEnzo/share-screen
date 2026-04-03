@@ -5,8 +5,12 @@
 
 const http = require('http');
 const { WebSocketServer } = require('ws');
+const authStore = require('./authStore');
+const crypto = require('crypto');
 
 const PORT = process.env.PORT || 8765;
+const TURN_SECRET = process.env.TURN_SECRET || '';
+const TURN_TTL = parseInt(process.env.TURN_TTL || '3600', 10); // en secondes
 
 // ─── Serveur HTTP de base (requis par Railway pour le health check) ──────────
 const server = http.createServer((req, res) => {
@@ -20,6 +24,57 @@ const server = http.createServer((req, res) => {
     }));
     return;
   }
+
+  if (req.url && req.url.startsWith('/api/turn-credentials')) {
+    if (req.method !== 'GET') {
+      res.writeHead(405, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Méthode non autorisée' }));
+      return;
+    }
+
+    if (!TURN_SECRET) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'TURN_SECRET non configuré sur le serveur' }));
+      return;
+    }
+
+    try {
+      const url = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
+      const rawUser = (url.searchParams.get('user') || url.searchParams.get('username') || '').trim().toLowerCase();
+
+      if (!rawUser) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Paramètre "user" manquant' }));
+        return;
+      }
+
+      let userId = rawUser;
+      if (typeof authStore.getUser === 'function') {
+        const existing = authStore.getUser(rawUser);
+        if (!existing) {
+          res.writeHead(401, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'Utilisateur inconnu' }));
+          return;
+        }
+        userId = existing.username || rawUser;
+      }
+
+      const timestamp = Math.floor(Date.now() / 1000) + TURN_TTL;
+      const username = `${timestamp}:${userId}`;
+      const password = crypto
+        .createHmac('sha1', TURN_SECRET)
+        .update(username)
+        .digest('base64');
+
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ username, password, ttl: TURN_TTL }));
+    } catch (err) {
+      console.error('Erreur /api/turn-credentials:', err);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Erreur serveur TURN credentials' }));
+    }
+    return;
+  }
   res.writeHead(200, { 'Content-Type': 'text/plain' });
   res.end('ScreenShare Pro — Signaling Server\n');
 });
@@ -29,6 +84,95 @@ const wss = new WebSocketServer({ server });
 
 // rooms : Map<roomCode, Set<{ws, role, id}>>
 const rooms = new Map();
+
+// Presence : username -> { online, sharing, roomCode, host, mode }
+const presence = new Map();
+
+// Sessions actives : username -> Set<WebSocket>
+const userSessions = new Map();
+
+function ensurePresence(username) {
+  let p = presence.get(username);
+  if (!p) {
+    p = { online: false, sharing: false, roomCode: null, host: null, mode: 'local' };
+    presence.set(username, p);
+  }
+  return p;
+}
+
+function updatePresenceOnline(username) {
+  const p = ensurePresence(username);
+  const sessions = userSessions.get(username);
+  p.online = Boolean(sessions && sessions.size > 0);
+}
+
+function updatePresenceSharing(username, sharing, roomCode) {
+  const p = ensurePresence(username);
+  p.sharing = Boolean(sharing);
+  p.roomCode = sharing ? roomCode : null;
+}
+
+function updatePresenceMeta(username, meta) {
+  const p = ensurePresence(username);
+  if (Object.prototype.hasOwnProperty.call(meta, 'host')) {
+    p.host = meta.host || null;
+  }
+  if (Object.prototype.hasOwnProperty.call(meta, 'mode')) {
+    p.mode = meta.mode === 'remote' ? 'remote' : 'local';
+  }
+}
+
+function buildStatusPayload(username) {
+  const p = ensurePresence(username);
+  return {
+    user: username,
+    online: Boolean(p.online),
+    sharing: Boolean(p.sharing),
+    roomCode: p.roomCode || null,
+    host: p.host || null,
+    mode: p.mode || 'local',
+  };
+}
+
+function notifyContactsOfStatus(username) {
+  const payload = buildStatusPayload(username);
+  const envelope = JSON.stringify({
+    type: 'contact-status',
+    contact: username,
+    online: payload.online,
+    sharing: payload.sharing,
+    roomCode: payload.roomCode,
+    host: payload.host,
+    mode: payload.mode,
+  });
+
+  const allUsers = authStore.getAllUsernames();
+  for (const watcherName of allUsers) {
+    const res = authStore.getContacts(watcherName);
+    if (!res.ok) continue;
+    if (!res.contacts || !res.contacts.includes(username)) continue;
+
+    const sessions = userSessions.get(watcherName);
+    if (!sessions) continue;
+    sessions.forEach((client) => {
+      if (client.readyState === 1) {
+        try { client.send(envelope); } catch (_) {}
+      }
+    });
+  }
+}
+
+function sendContactsList(username, ws) {
+  const res = authStore.getContacts(username);
+  if (!res.ok) {
+    ws.send(JSON.stringify({ type: 'contacts-error', message: res.error }));
+    return;
+  }
+
+  const contacts = res.contacts || [];
+  const list = contacts.map((name) => buildStatusPayload(name));
+  ws.send(JSON.stringify({ type: 'contacts-list', contacts: list }));
+}
 
 // Nettoyage des rooms vides toutes les 5 minutes
 setInterval(() => {
@@ -42,15 +186,42 @@ wss.on('connection', (ws, req) => {
   const clientId = Math.random().toString(36).slice(2, 8);
   let clientRoom = null;
   let clientRole = null;
+   let username = null;
+  let initialized = false;
 
   console.log(`[+] Client ${clientId} connecté (${ip})`);
 
-  // Timeout : déconnecter si pas de 'join' dans les 10 secondes
+  // Timeout : déconnecter si aucun message reçu dans les 10 secondes
   const joinTimeout = setTimeout(() => {
-    if (!clientRoom) {
-      ws.close(1008, 'Join timeout');
+    if (!initialized) {
+      ws.close(1008, 'Init timeout');
     }
   }, 10_000);
+
+  function bindUser(newUsername) {
+    // Détacher l'ancienne association le cas échéant
+    if (username && userSessions.has(username)) {
+      const sessions = userSessions.get(username);
+      sessions.delete(ws);
+      if (sessions.size === 0) {
+        userSessions.delete(username);
+      }
+      updatePresenceOnline(username);
+      notifyContactsOfStatus(username);
+    }
+
+    username = newUsername || null;
+    if (!username) return;
+
+    let sessions = userSessions.get(username);
+    if (!sessions) {
+      sessions = new Set();
+      userSessions.set(username, sessions);
+    }
+    sessions.add(ws);
+    updatePresenceOnline(username);
+    notifyContactsOfStatus(username);
+  }
 
   ws.on('message', (data) => {
     let msg;
@@ -60,11 +231,122 @@ wss.on('connection', (ws, req) => {
       return; // Ignore les messages invalides
     }
 
+    if (!initialized) {
+      initialized = true;
+      clearTimeout(joinTimeout);
+    }
+
     switch (msg.type) {
 
-      case 'join': {
-        clearTimeout(joinTimeout);
+      // ─── Authentification & contacts ──────────────────────────────────────
+      case 'register': {
+        const { username: rawUser, password } = msg;
+        const result = authStore.registerUser(rawUser, password);
+        if (!result.ok) {
+          ws.send(JSON.stringify({ type: 'auth-error', message: result.error }));
+          return;
+        }
 
+        bindUser(result.user.username);
+
+        const contacts = (result.user.contacts || []).map((name) => buildStatusPayload(name));
+        ws.send(JSON.stringify({
+          type: 'auth-ok',
+          username: result.user.username,
+          contacts,
+          isNew: true,
+        }));
+        break;
+      }
+
+      case 'login': {
+        const { username: rawUser, password } = msg;
+        const result = authStore.validateUser(rawUser, password);
+        if (!result.ok) {
+          ws.send(JSON.stringify({ type: 'auth-error', message: result.error }));
+          return;
+        }
+
+        bindUser(result.user.username);
+
+        const contacts = (result.user.contacts || []).map((name) => buildStatusPayload(name));
+        ws.send(JSON.stringify({
+          type: 'auth-ok',
+          username: result.user.username,
+          contacts,
+        }));
+        break;
+      }
+
+      case 'logout': {
+        if (!username) {
+          ws.send(JSON.stringify({ type: 'auth-error', message: 'Non authentifié.' }));
+          break;
+        }
+        const oldUser = username;
+        bindUser(null);
+        ws.send(JSON.stringify({ type: 'auth-logged-out', username: oldUser }));
+        break;
+      }
+
+      case 'get-contacts': {
+        if (!username) {
+          ws.send(JSON.stringify({ type: 'auth-error', message: 'Non authentifié.' }));
+          break;
+        }
+        sendContactsList(username, ws);
+        break;
+      }
+
+      case 'add-contact': {
+        if (!username) {
+          ws.send(JSON.stringify({ type: 'auth-error', message: 'Non authentifié.' }));
+          break;
+        }
+        const contactName = msg.contact || msg.username;
+        const res = authStore.addContact(username, contactName);
+        if (!res.ok) {
+          ws.send(JSON.stringify({ type: 'contacts-error', message: res.error }));
+          break;
+        }
+        const contacts = (res.contacts || []).map((name) => buildStatusPayload(name));
+        ws.send(JSON.stringify({ type: 'contacts-list', contacts }));
+        // Informer le contact de l'état courant de l'utilisateur
+        notifyContactsOfStatus(username);
+        break;
+      }
+
+      case 'remove-contact': {
+        if (!username) {
+          ws.send(JSON.stringify({ type: 'auth-error', message: 'Non authentifié.' }));
+          break;
+        }
+        const contactName = msg.contact || msg.username;
+        const res = authStore.removeContact(username, contactName);
+        if (!res.ok) {
+          ws.send(JSON.stringify({ type: 'contacts-error', message: res.error }));
+          break;
+        }
+        const contacts = (res.contacts || []).map((name) => buildStatusPayload(name));
+        ws.send(JSON.stringify({ type: 'contacts-list', contacts }));
+        break;
+      }
+
+      case 'presence-info': {
+        if (!username) {
+          ws.send(JSON.stringify({ type: 'auth-error', message: 'Non authentifié.' }));
+          break;
+        }
+        const meta = {
+          host: msg.host || null,
+          mode: msg.mode === 'remote' ? 'remote' : 'local',
+        };
+        updatePresenceMeta(username, meta);
+        notifyContactsOfStatus(username);
+        break;
+      }
+
+      case 'join': {
         const code = (msg.room || '').toUpperCase().trim();
         if (!code || code.length < 3) {
           ws.send(JSON.stringify({ type: 'error', message: 'Code invalide' }));
@@ -102,6 +384,12 @@ wss.on('connection', (ws, req) => {
         }
 
         console.log(`[=] ${clientId} (${clientRole}) → room "${code}" (${room.size} membres)`);
+
+        // Mettre à jour le statut de partage pour les contacts
+        if (clientRole === 'broadcaster' && username) {
+          updatePresenceSharing(username, true, code);
+          notifyContactsOfStatus(username);
+        }
         break;
       }
 
@@ -132,6 +420,17 @@ wss.on('connection', (ws, req) => {
   ws.on('close', () => {
     clearTimeout(joinTimeout);
     cleanup();
+
+    // Nettoyage des sessions utilisateur / présence
+    if (username && userSessions.has(username)) {
+      const sessions = userSessions.get(username);
+      sessions.delete(ws);
+      if (sessions.size === 0) {
+        userSessions.delete(username);
+      }
+      updatePresenceOnline(username);
+      notifyContactsOfStatus(username);
+    }
   });
 
   ws.on('error', (err) => {
@@ -152,6 +451,15 @@ wss.on('connection', (ws, req) => {
 
     broadcast(clientRoom, ws, { type: 'peer-left', role: clientRole, id: clientId });
     console.log(`[-] ${clientId} (${clientRole}) quitte "${clientRoom}" (${room.size} restants)`);
+
+    // Si c'était un diffuseur, mettre à jour son statut de partage
+    if (username && clientRole === 'broadcaster') {
+      const p = ensurePresence(username);
+      if (p.roomCode === clientRoom) {
+        updatePresenceSharing(username, false, null);
+        notifyContactsOfStatus(username);
+      }
+    }
 
     if (room.size === 0) rooms.delete(clientRoom);
     clientRoom = null;
