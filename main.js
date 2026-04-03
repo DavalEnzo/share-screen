@@ -533,7 +533,7 @@ ipcMain.handle('clipboard-write-text', (_event, text) => {
   return true;
 });
 
-ipcMain.handle('get-turn-credentials', async (_event, username) => {
+ipcMain.handle('get-turn-credentials', async () => {
   const base = process.env.REMOTE_SIGNALING_URL;
   if (!base) return null;
 
@@ -544,7 +544,6 @@ ipcMain.handle('get-turn-credentials', async (_event, username) => {
 
     baseUrl.pathname = '/api/turn-credentials';
     baseUrl.search = '';
-    baseUrl.searchParams.set('user', String(username || 'guest'));
 
     const res = await fetch(baseUrl.toString());
     if (!res.ok) {

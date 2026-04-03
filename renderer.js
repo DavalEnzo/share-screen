@@ -79,8 +79,7 @@ async function getIceConfig() {
     const nowSec = Date.now() / 1000;
     if (!cachedTurnCreds || nowSec >= cachedTurnCredsExpireAt) {
       try {
-        const currentUsername = state.currentUser?.username || state.currentUser?.name || '';
-        const res = await window.electronAPI.getTurnCredentials(currentUsername || 'guest');
+        const res = await window.electronAPI.getTurnCredentials();
         if (res && res.username && (res.password || res.credential)) {
           const pwd = res.password || res.credential;
           const ttl = Number(res.ttl || 3600);

@@ -39,28 +39,11 @@ const server = http.createServer((req, res) => {
     }
 
     try {
-      const url = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
-      const rawUser = (url.searchParams.get('user') || url.searchParams.get('username') || '').trim().toLowerCase();
-
-      if (!rawUser) {
-        res.writeHead(400, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ error: 'Paramètre "user" manquant' }));
-        return;
-      }
-
-      let userId = rawUser;
-      if (typeof authStore.getUser === 'function') {
-        const existing = authStore.getUser(rawUser);
-        if (!existing) {
-          res.writeHead(401, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ error: 'Utilisateur inconnu' }));
-          return;
-        }
-        userId = existing.username || rawUser;
-      }
-
       const timestamp = Math.floor(Date.now() / 1000) + TURN_TTL;
-      const username = `${timestamp}:${userId}`;
+      // Pour le mode REST de coturn, le username doit contenir le timestamp
+      // d'expiration en première partie. Ici on n'ajoute aucun identifiant
+      // utilisateur : la route génère des credentials anonymes éphémères.
+      const username = String(timestamp);
       const password = crypto
         .createHmac('sha1', TURN_SECRET)
         .update(username)
