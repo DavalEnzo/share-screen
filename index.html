@@ -589,6 +589,67 @@
     .info-val { font-family: var(--mono); color: var(--text); font-weight: 600; }
     .info-val.accent { color: var(--accent); }
 
+    /* Contacts */
+    .contact-list-empty {
+      text-align: center;
+      padding: 16px 0;
+      font-size: 12px;
+      font-family: var(--mono);
+      color: var(--text-dim);
+    }
+
+    .contact-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 6px 0;
+      border-bottom: 1px solid var(--border);
+      font-size: 12px;
+    }
+
+    .contact-row:last-child { border-bottom: none; }
+
+    .contact-main {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .contact-name {
+      font-family: var(--mono);
+      font-weight: 600;
+    }
+
+    .contact-status-text {
+      font-size: 11px;
+      font-family: var(--mono);
+      color: var(--text-dim);
+    }
+
+    .contact-status-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--text-dim);
+      box-shadow: none;
+    }
+
+    .contact-status-dot.online {
+      background: var(--green);
+      box-shadow: 0 0 6px var(--green);
+    }
+
+    .contact-status-dot.sharing {
+      background: var(--accent3);
+      box-shadow: 0 0 6px var(--accent3);
+    }
+
+    .contact-actions {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
     /* Toggle */
     .toggle-row {
       display: flex;
@@ -748,6 +809,9 @@
         </div>
         <div class="divider"></div>
         <div class="nav-label">Outils</div>
+        <div class="nav-item" id="nav-contacts">
+          <span class="nav-icon">👥</span> Contacts
+        </div>
         <div class="nav-item" id="nav-settings">
           <span class="nav-icon">⚙️</span> Paramètres
         </div>
@@ -1020,6 +1084,61 @@
             <div class="stat-box">
               <div class="stat-value" id="recvLatency">—</div>
               <div class="stat-label">Latence</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- PAGE: Paramètres -->
+      <div class="page" id="page-contacts">
+        <div class="page-header">
+          <div>
+            <div class="page-title">Con<span>tacts</span></div>
+            <div class="page-sub">Connectez-vous, gérez vos contacts et rejoignez leurs partages</div>
+          </div>
+        </div>
+
+        <div class="grid-2">
+          <div class="card">
+            <div class="card-header">
+              <div class="card-icon cyan">👤</div>
+              <div class="card-title">Compte</div>
+            </div>
+            <div style="display:flex; flex-direction:column; gap:12px">
+              <div class="field">
+                <label>Nom d'utilisateur</label>
+                <input class="input" id="authUsernameInput" placeholder="ex: enzo">
+              </div>
+              <div class="field">
+                <label>Mot de passe</label>
+                <input class="input" id="authPasswordInput" type="password" placeholder="••••">
+              </div>
+              <div style="display:flex; gap:8px">
+                <button class="btn btn-primary" id="authLoginBtn" style="flex:1">Se connecter</button>
+                <button class="btn btn-ghost" id="authRegisterBtn" style="flex:1">Créer un compte</button>
+              </div>
+              <div style="font-size:11px; font-family:var(--mono); color:var(--text-dim)" id="authStatusLabel">
+                Non connecté.
+              </div>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="card-header">
+              <div class="card-icon purple">👥</div>
+              <div class="card-title">Mes contacts</div>
+            </div>
+            <div style="display:flex; flex-direction:column; gap:10px">
+              <div class="field">
+                <label>Ajouter un contact (nom d'utilisateur)</label>
+                <div style="display:flex; gap:8px">
+                  <input class="input" id="newContactInput" placeholder="ex: alice">
+                  <button class="btn btn-primary" id="addContactBtn" style="padding:8px 14px;font-size:11px;flex-shrink:0">Ajouter</button>
+                </div>
+              </div>
+              <div id="contactsList" style="margin-top:4px">
+                <div class="contact-list-empty">Connectez-vous pour voir vos contacts.</div>
+              </div>
             </div>
           </div>
         </div>

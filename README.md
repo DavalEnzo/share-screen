@@ -55,6 +55,7 @@ screenshare-app/
 - **WebRTC P2P** : aucun serveur cloud, 100% local
 - **Serveur de signalisation** intégré (WebSocket sur port 8765)
 - **Code de session** pour partager facilement
+ - **Comptes & contacts** : authentification simple, liste de contacts, statut en ligne / partage en cours, rejoindre un partage depuis la page Contacts
 
 ## 🌐 Comment utiliser
 
@@ -70,6 +71,13 @@ screenshare-app/
 1. Aller dans "Recevoir un flux"
 2. Saisir le **code de session** + l'**IP du diffuseur**
 3. Cliquer "Rejoindre la session"
+
+### Contacts & authentification
+1. Aller dans l'onglet **Contacts**
+2. Créer un compte ou se connecter (identifiant + mot de passe)
+3. Ajouter des contacts par leur nom d'utilisateur
+4. Lorsque l'un de vos contacts démarre un partage, son statut passe en **En partage** et un bouton *Rejoindre* apparaît
+5. Cliquez sur *Rejoindre* pour basculer automatiquement sur la page **Recevoir** et vous connecter à sa session
 
 ## 📦 Build pour distribution
 

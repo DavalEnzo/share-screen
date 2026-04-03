@@ -8,3 +8,4 @@ services:
       - ./turnserver.conf:/etc/coturn/turnserver.conf:ro
     environment:
       - DETECT_EXTERNAL_IP=yes
+    command: -c /etc/coturn/turnserver.conf

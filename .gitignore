@@ -29,3 +29,4 @@ dist/
 build/
 
 turnserver.conf
+users.json

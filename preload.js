@@ -11,6 +11,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     turnUsername: process.env.TURN_USERNAME || '',
     turnPassword: process.env.TURN_PASSWORD || '',
   }),
+  getTurnCredentials: (username) => ipcRenderer.invoke('get-turn-credentials', String(username || '')),
   copyToClipboard: (text) => ipcRenderer.invoke('clipboard-write-text', String(text || '')),
   minimizeWindow: () => ipcRenderer.send('window-minimize'),
   maximizeWindow: () => ipcRenderer.send('window-maximize'),

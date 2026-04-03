@@ -1,12 +1,12 @@
 // ─── Config ───────────────────────────────────────────────────────────────────
-// 🔧 APRÈS déploiement sur Railway, remplace cette URL par la tienne :
-//    ex: wss://screenshare-signaling.up.railway.app
-// En local (développement), le serveur local sur port 8765 est utilisé en fallback.
-const DEFAULT_REMOTE_SIGNALING_URL = 'wss://share-screen-production.up.railway.app';
+// 🔧 Par défaut, on utilise le serveur local intégré (Electron).
+// Pour activer un serveur distant (Railway, VPS...), définissez REMOTE_SIGNALING_URL.
+//    ex: wss://votre-projet.up.railway.app
+const DEFAULT_REMOTE_SIGNALING_URL = '';
 let remoteSignalingUrl = DEFAULT_REMOTE_SIGNALING_URL;
 
 function useRemoteSignaling() {
-  return Boolean(remoteSignalingUrl && !remoteSignalingUrl.includes('TON-PROJET'));
+  return Boolean(remoteSignalingUrl);
 }
 
 // ─── State ───────────────────────────────────────────────────────────────────
@@ -27,6 +27,14 @@ const state = {
   signalingShouldReconnect: false,
   signalingReconnectAttempts: 0,
   signalingReconnectTimer: null,
+  // Auth & contacts
+  authWs: null,
+  authShouldReconnect: false,
+  authReconnectAttempts: 0,
+  authReconnectTimer: null,
+  authPendingMessage: null,
+  currentUser: null,
+  contacts: [],
   // Receiver
   receiverPc: null,
   receiverWs: null,
@@ -39,15 +47,76 @@ const state = {
   receiverJoinHost: 'localhost',
 };
 
-// ─── ICE config (STUN public + TURN via .env) ───────────────────────────────
-const ICE_CONFIG = {
-  iceServers: [
-    // STUN Google (fonctionne pour ~70% des connexions)
-    { urls: 'stun:stun.l.google.com:19302' },
-    { urls: 'stun:stun1.l.google.com:19302' },
-    // Les serveurs TURN sont ajoutés dynamiquement depuis getRuntimeConfig()
-  ]
+// ─── ICE config (STUN public + TURN dynamique) ──────────────────────────────
+const BASE_ICE_SERVERS = [
+  // STUN Google (fonctionne pour ~70% des connexions)
+  { urls: 'stun:stun.l.google.com:19302' },
+  { urls: 'stun:stun1.l.google.com:19302' },
+];
+
+const turnStaticConfig = {
+  host: '',
+  port: '',
+  username: '',
+  password: '',
 };
+
+let cachedTurnCreds = null;
+let cachedTurnCredsExpireAt = 0;
+
+async function getIceConfig() {
+  const iceServers = BASE_ICE_SERVERS.slice();
+
+  if (!turnStaticConfig.host || !turnStaticConfig.port) {
+    return { iceServers };
+  }
+
+  let username = turnStaticConfig.username || '';
+  let credential = turnStaticConfig.password || '';
+
+  // En mode distant, essayer de récupérer des credentials TURN éphémères
+  if (useRemoteSignaling() && window.electronAPI?.getTurnCredentials) {
+    const nowSec = Date.now() / 1000;
+    if (!cachedTurnCreds || nowSec >= cachedTurnCredsExpireAt) {
+      try {
+        const currentUsername = state.currentUser?.username || state.currentUser?.name || '';
+        const res = await window.electronAPI.getTurnCredentials(currentUsername || 'guest');
+        if (res && res.username && (res.password || res.credential)) {
+          const pwd = res.password || res.credential;
+          const ttl = Number(res.ttl || 3600);
+          cachedTurnCreds = { username: res.username, password: pwd, ttl };
+          cachedTurnCredsExpireAt = nowSec + Math.max(60, ttl - 60);
+        }
+      } catch (e) {
+        console.error('Erreur récupération credentials TURN:', e);
+      }
+    }
+
+    if (cachedTurnCreds) {
+      username = cachedTurnCreds.username;
+      credential = cachedTurnCreds.password;
+    }
+  }
+
+  if (username && credential) {
+    iceServers.push({
+      urls: [
+        `turn:${turnStaticConfig.host}:${turnStaticConfig.port}?transport=udp`,
+        `turn:${turnStaticConfig.host}:${turnStaticConfig.port}?transport=tcp`,
+      ],
+      username,
+      credential,
+    });
+  }
+
+  return { iceServers };
+}
+
+// URL dédiée pour l'auth/contacts : toujours le serveur local intégré
+function getAuthWebSocketUrl() {
+  const port = state.signalingPort || 8765;
+  return `ws://localhost:${port}`;
+}
 
 // ─── Signaling URL helper ─────────────────────────────────────────────────────
 function getSignalingUrl(host) {
@@ -65,15 +134,11 @@ async function init() {
     remoteSignalingUrl = runtimeConfig.remoteSignalingUrl.trim();
   }
 
-  if (runtimeConfig.turnHost && runtimeConfig.turnPort && runtimeConfig.turnUsername && runtimeConfig.turnPassword) {
-    ICE_CONFIG.iceServers.push({
-      urls: [
-        `turn:${runtimeConfig.turnHost}:${runtimeConfig.turnPort}?transport=udp`,
-        `turn:${runtimeConfig.turnHost}:${runtimeConfig.turnPort}?transport=tcp`,
-      ],
-      username: runtimeConfig.turnUsername,
-      credential: runtimeConfig.turnPassword,
-    });
+  if (runtimeConfig.turnHost && runtimeConfig.turnPort) {
+    turnStaticConfig.host = runtimeConfig.turnHost;
+    turnStaticConfig.port = runtimeConfig.turnPort;
+    turnStaticConfig.username = runtimeConfig.turnUsername || '';
+    turnStaticConfig.password = runtimeConfig.turnPassword || '';
   }
 
   const [ip, port] = await Promise.all([
@@ -107,6 +172,11 @@ async function init() {
   }
 
   generateRoomCode();
+
+  // Mettre à jour les infos de présence une fois l'IP locale connue
+  if (state.currentUser && state.authWs && state.authWs.readyState === WebSocket.OPEN) {
+    sendPresenceInfo();
+  }
 }
 
 // ─── Navigation ───────────────────────────────────────────────────────────────
@@ -168,6 +238,360 @@ async function copyRoomCode() {
     console.error('Clipboard copy failed:', error);
     notify('Copie impossible. Essayez Ctrl+C sur le code.', 'error');
   }
+}
+
+// ─── Auth & contacts ────────────────────────────────────────────────────────
+function setAuthStatus(text, type) {
+  const el = document.getElementById('authStatusLabel');
+  if (!el) return;
+  el.textContent = text;
+  if (type === 'error') {
+    el.style.color = 'var(--red)';
+  } else if (type === 'success') {
+    el.style.color = 'var(--green)';
+  } else {
+    el.style.color = 'var(--text-dim)';
+  }
+}
+
+function canonicalContact(payload) {
+  if (!payload) return null;
+  const name = (payload.user || payload.name || payload.contact || payload.username || '').toString();
+  if (!name) return null;
+  return {
+    name,
+    online: Boolean(payload.online),
+    sharing: Boolean(payload.sharing),
+    roomCode: payload.roomCode || null,
+    host: payload.host || null,
+    mode: payload.mode === 'remote' ? 'remote' : 'local',
+  };
+}
+
+function upsertContactFromStatus(payload) {
+  const info = canonicalContact({ ...payload, user: payload.contact || payload.user || payload.name });
+  if (!info) return;
+
+  const existing = state.contacts.find(c => c.name === info.name);
+  if (existing) {
+    existing.online = info.online;
+    existing.sharing = info.sharing;
+    existing.roomCode = info.roomCode;
+    existing.host = info.host;
+    existing.mode = info.mode;
+  } else {
+    state.contacts.push(info);
+  }
+}
+
+function renderContactsList() {
+  const listEl = document.getElementById('contactsList');
+  if (!listEl) return;
+
+  listEl.innerHTML = '';
+
+  if (!state.currentUser) {
+    listEl.innerHTML = '<div class="contact-list-empty">Connectez-vous pour voir vos contacts.</div>';
+    return;
+  }
+
+  if (!state.contacts || state.contacts.length === 0) {
+    listEl.innerHTML = '<div class="contact-list-empty">Aucun contact pour le moment.</div>';
+    return;
+  }
+
+  const contacts = [...state.contacts].sort((a, b) => a.name.localeCompare(b.name));
+
+  contacts.forEach(contact => {
+    const row = document.createElement('div');
+    row.className = 'contact-row';
+
+    const main = document.createElement('div');
+    main.className = 'contact-main';
+
+    const dot = document.createElement('div');
+    dot.className = 'contact-status-dot';
+    if (contact.sharing) dot.classList.add('sharing');
+    else if (contact.online) dot.classList.add('online');
+
+    const nameSpan = document.createElement('div');
+    nameSpan.className = 'contact-name';
+    nameSpan.textContent = contact.name;
+
+    const statusSpan = document.createElement('div');
+    statusSpan.className = 'contact-status-text';
+    if (contact.sharing && contact.mode === 'remote') {
+      statusSpan.textContent = 'En partage (distant)';
+    } else if (contact.sharing) {
+      statusSpan.textContent = 'En partage (LAN)';
+    } else if (contact.online) {
+      statusSpan.textContent = 'En ligne';
+    } else {
+      statusSpan.textContent = 'Hors ligne';
+    }
+
+    main.appendChild(dot);
+    main.appendChild(nameSpan);
+    main.appendChild(statusSpan);
+
+    const actions = document.createElement('div');
+    actions.className = 'contact-actions';
+
+    if (contact.sharing && contact.roomCode) {
+      const joinBtn = document.createElement('button');
+      joinBtn.className = 'btn btn-primary';
+      joinBtn.style.padding = '4px 10px';
+      joinBtn.style.fontSize = '11px';
+      joinBtn.dataset.action = 'join-contact';
+      joinBtn.dataset.contactName = contact.name;
+      joinBtn.dataset.roomCode = contact.roomCode;
+      if (contact.host) joinBtn.dataset.host = contact.host;
+      joinBtn.dataset.mode = contact.mode || 'local';
+      joinBtn.textContent = 'Rejoindre';
+      actions.appendChild(joinBtn);
+    }
+
+    const removeBtn = document.createElement('button');
+    removeBtn.className = 'btn btn-ghost';
+    removeBtn.style.padding = '4px 8px';
+    removeBtn.style.fontSize = '11px';
+    removeBtn.dataset.action = 'remove-contact';
+    removeBtn.dataset.contactName = contact.name;
+    removeBtn.textContent = '✕';
+    actions.appendChild(removeBtn);
+
+    row.appendChild(main);
+    row.appendChild(actions);
+    listEl.appendChild(row);
+  });
+}
+
+function sendPresenceInfo() {
+  if (!state.currentUser || !state.authWs || state.authWs.readyState !== WebSocket.OPEN) return;
+  const msg = {
+    type: 'presence-info',
+    host: state.localIp || 'localhost',
+    mode: useRemoteSignaling() ? 'remote' : 'local',
+  };
+  try {
+    state.authWs.send(JSON.stringify(msg));
+  } catch (_) {}
+}
+
+function openAuthWebSocket() {
+  const url = getAuthWebSocketUrl();
+
+  if (state.authWs && (state.authWs.readyState === WebSocket.OPEN || state.authWs.readyState === WebSocket.CONNECTING)) {
+    return;
+  }
+
+  const ws = new WebSocket(url);
+  state.authWs = ws;
+  state.authShouldReconnect = true;
+
+  ws.onopen = () => {
+    state.authReconnectAttempts = 0;
+    if (state.authPendingMessage) {
+      try {
+        ws.send(JSON.stringify(state.authPendingMessage));
+      } catch (_) {}
+      state.authPendingMessage = null;
+    } else if (state.currentUser) {
+      // Ré-envoyer les infos de présence si déjà connecté
+      sendPresenceInfo();
+    }
+  };
+
+  ws.onmessage = (event) => {
+    let msg;
+    try {
+      msg = JSON.parse(event.data);
+    } catch {
+      return;
+    }
+
+    if (msg.type === 'auth-ok') {
+      state.currentUser = { username: msg.username };
+      state.contacts = Array.isArray(msg.contacts)
+        ? msg.contacts.map(canonicalContact).filter(Boolean)
+        : [];
+      setAuthStatus(`Connecté en tant que ${msg.username}`, 'success');
+      renderContactsList();
+      sendPresenceInfo();
+      return;
+    }
+
+    if (msg.type === 'auth-error') {
+      setAuthStatus(msg.message || 'Erreur d\'authentification.', 'error');
+      notify(msg.message || 'Erreur d\'authentification.', 'error');
+      return;
+    }
+
+    if (msg.type === 'auth-logged-out') {
+      state.currentUser = null;
+      state.contacts = [];
+      setAuthStatus('Non connecté.', 'info');
+      renderContactsList();
+      return;
+    }
+
+    if (msg.type === 'contacts-list') {
+      state.contacts = Array.isArray(msg.contacts)
+        ? msg.contacts.map(canonicalContact).filter(Boolean)
+        : [];
+      renderContactsList();
+      return;
+    }
+
+    if (msg.type === 'contacts-error') {
+      notify(msg.message || 'Erreur contacts.', 'error');
+      return;
+    }
+
+    if (msg.type === 'contact-status') {
+      upsertContactFromStatus(msg);
+      renderContactsList();
+      return;
+    }
+  };
+
+  ws.onerror = () => {
+    setAuthStatus('Erreur de connexion au serveur de contacts.', 'error');
+  };
+
+  ws.onclose = () => {
+    state.authWs = null;
+    if (!state.authShouldReconnect || !state.currentUser) return;
+
+    const maxAttempts = 3;
+    const attempt = state.authReconnectAttempts + 1;
+    if (attempt > maxAttempts) {
+      state.authShouldReconnect = false;
+      setAuthStatus('Serveur de contacts indisponible.', 'error');
+      return;
+    }
+
+    state.authReconnectAttempts = attempt;
+    const delayMs = Math.min(1000 * (2 ** (attempt - 1)), 10000);
+    if (state.authReconnectTimer) return;
+    state.authReconnectTimer = setTimeout(() => {
+      state.authReconnectTimer = null;
+      openAuthWebSocket();
+    }, delayMs);
+  };
+}
+
+function ensureAuthConnectionAndSend(payload) {
+  state.authPendingMessage = payload;
+  if (state.authWs && state.authWs.readyState === WebSocket.OPEN) {
+    try {
+      state.authWs.send(JSON.stringify(payload));
+      state.authPendingMessage = null;
+      return;
+    } catch (_) {
+      // On tente une reconnexion ci-dessous
+    }
+  }
+  openAuthWebSocket();
+}
+
+function handleAuthLogin() {
+  const userInput = document.getElementById('authUsernameInput');
+  const passInput = document.getElementById('authPasswordInput');
+  if (!userInput || !passInput) return;
+
+  const username = userInput.value.trim();
+  const password = passInput.value;
+
+  if (!username || !password) {
+    setAuthStatus('Entrez un identifiant et un mot de passe.', 'error');
+    return;
+  }
+
+  setAuthStatus('Connexion en cours...', 'info');
+  ensureAuthConnectionAndSend({ type: 'login', username, password });
+}
+
+function handleAuthRegister() {
+  const userInput = document.getElementById('authUsernameInput');
+  const passInput = document.getElementById('authPasswordInput');
+  if (!userInput || !passInput) return;
+
+  const username = userInput.value.trim();
+  const password = passInput.value;
+
+  if (!username || !password) {
+    setAuthStatus('Choisissez un identifiant et un mot de passe.', 'error');
+    return;
+  }
+
+  setAuthStatus('Création du compte...', 'info');
+  ensureAuthConnectionAndSend({ type: 'register', username, password });
+}
+
+function handleAddContact() {
+  if (!state.currentUser) {
+    notify('Connectez-vous avant d\'ajouter des contacts.', 'error');
+    return;
+  }
+  const input = document.getElementById('newContactInput');
+  if (!input) return;
+  const name = input.value.trim().toLowerCase();
+  if (!name) {
+    notify('Entrez un nom d\'utilisateur à ajouter.', 'error');
+    return;
+  }
+  ensureAuthConnectionAndSend({ type: 'add-contact', contact: name });
+  input.value = '';
+}
+
+function handleContactsListClick(event) {
+  const target = event.target.closest('[data-action]');
+  if (!target) return;
+  const action = target.dataset.action;
+  const contactName = target.dataset.contactName;
+  if (!contactName) return;
+
+  if (action === 'remove-contact') {
+    if (!state.currentUser) return;
+    ensureAuthConnectionAndSend({ type: 'remove-contact', contact: contactName });
+    return;
+  }
+
+  if (action === 'join-contact') {
+    const roomCode = target.dataset.roomCode || '';
+    const host = target.dataset.host || '';
+    const mode = target.dataset.mode || 'local';
+    joinContactShare(contactName, roomCode, host, mode);
+  }
+}
+
+function joinContactShare(contactName, roomCode, host, mode) {
+  if (!roomCode) {
+    notify(`Aucun partage actif pour ${contactName}.`, 'error');
+    return;
+  }
+
+  if (mode === 'remote' && !useRemoteSignaling()) {
+    notify('Ce contact utilise un serveur distant. Configurez REMOTE_SIGNALING_URL avant de rejoindre.', 'error');
+    return;
+  }
+
+  const codeInput = document.getElementById('joinCodeInput');
+  const hostInput = document.getElementById('joinHostInput');
+  if (!codeInput || !hostInput) return;
+
+  codeInput.value = roomCode;
+
+  if (!useRemoteSignaling()) {
+    hostInput.value = host || state.localIp || 'localhost';
+  }
+
+  showPage('receive');
+  // Laisser le temps au DOM de basculer avant de lancer la connexion
+  setTimeout(() => {
+    joinSession();
+  }, 50);
 }
 
 // ─── Mode selector ────────────────────────────────────────────────────────────
@@ -574,7 +998,8 @@ function preferH264(pc) {
 }
 
 async function createBroadcasterPeer(peerId) {
-  const pc = new RTCPeerConnection(ICE_CONFIG);
+  const iceConfig = await getIceConfig();
+  const pc = new RTCPeerConnection(iceConfig);
   state.peerConnections.set(peerId, pc);
 
   // Add all tracks
@@ -790,7 +1215,8 @@ async function handleReceiverOffer(offer) {
   }
 
   state.receiverTargetId = offer.fromId || null;
-  state.receiverPc = new RTCPeerConnection(ICE_CONFIG);
+  const iceConfig = await getIceConfig();
+  state.receiverPc = new RTCPeerConnection(iceConfig);
 
   state.receiverPc.ontrack = (event) => {
     const video = document.getElementById('remoteVideo');
@@ -991,6 +1417,7 @@ function setupUiBindings() {
 
   document.getElementById('nav-share')?.addEventListener('click', () => showPage('share'));
   document.getElementById('nav-receive')?.addEventListener('click', () => showPage('receive'));
+  document.getElementById('nav-contacts')?.addEventListener('click', () => showPage('contacts'));
   document.getElementById('nav-settings')?.addEventListener('click', () => showPage('settings'));
   document.getElementById('nav-info')?.addEventListener('click', () => showPage('info'));
 
@@ -1004,6 +1431,11 @@ function setupUiBindings() {
   document.getElementById('joinBtn')?.addEventListener('click', joinSession);
   document.getElementById('fullscreenBtn')?.addEventListener('click', toggleFullscreen);
   document.getElementById('leaveBtn')?.addEventListener('click', leaveSession);
+
+  document.getElementById('authLoginBtn')?.addEventListener('click', handleAuthLogin);
+  document.getElementById('authRegisterBtn')?.addEventListener('click', handleAuthRegister);
+  document.getElementById('addContactBtn')?.addEventListener('click', handleAddContact);
+  document.getElementById('contactsList')?.addEventListener('click', handleContactsListClick);
 
   document.getElementById('joinCodeInput')?.addEventListener('input', (event) => {
     event.target.value = event.target.value.toUpperCase();

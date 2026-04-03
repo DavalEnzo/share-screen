@@ -12,6 +12,7 @@ app.commandLine.appendSwitch('disable-backgrounding-occluded-windows');
 const path = require('path');
 const http = require('http');
 const { Server } = require('ws');
+const authStore = require('./authStore');
 
 let mainWindow;
 let signalingServer;
@@ -82,6 +83,95 @@ function startSignalingServer() {
   // rooms : Map<roomCode, Set<{ws, role, id}>>
   const rooms = new Map();
 
+  // Presence locale : username -> { online, sharing, roomCode, host, mode }
+  const presence = new Map();
+
+  // Sessions actives : username -> Set<WebSocket>
+  const userSessions = new Map();
+
+  function ensurePresence(username) {
+    let p = presence.get(username);
+    if (!p) {
+      p = { online: false, sharing: false, roomCode: null, host: null, mode: 'local' };
+      presence.set(username, p);
+    }
+    return p;
+  }
+
+  function updatePresenceOnline(username) {
+    const p = ensurePresence(username);
+    const sessions = userSessions.get(username);
+    p.online = Boolean(sessions && sessions.size > 0);
+  }
+
+  function updatePresenceSharing(username, sharing, roomCode) {
+    const p = ensurePresence(username);
+    p.sharing = Boolean(sharing);
+    p.roomCode = sharing ? roomCode : null;
+  }
+
+  function updatePresenceMeta(username, meta) {
+    const p = ensurePresence(username);
+    if (Object.prototype.hasOwnProperty.call(meta, 'host')) {
+      p.host = meta.host || null;
+    }
+    if (Object.prototype.hasOwnProperty.call(meta, 'mode')) {
+      p.mode = meta.mode === 'remote' ? 'remote' : 'local';
+    }
+  }
+
+  function buildStatusPayload(username) {
+    const p = ensurePresence(username);
+    return {
+      user: username,
+      online: Boolean(p.online),
+      sharing: Boolean(p.sharing),
+      roomCode: p.roomCode || null,
+      host: p.host || null,
+      mode: p.mode || 'local',
+    };
+  }
+
+  function notifyContactsOfStatus(username) {
+    const payload = buildStatusPayload(username);
+    const envelope = JSON.stringify({
+      type: 'contact-status',
+      contact: username,
+      online: payload.online,
+      sharing: payload.sharing,
+      roomCode: payload.roomCode,
+      host: payload.host,
+      mode: payload.mode,
+    });
+
+    const allUsers = authStore.getAllUsernames();
+    for (const watcherName of allUsers) {
+      const res = authStore.getContacts(watcherName);
+      if (!res.ok) continue;
+      if (!res.contacts || !res.contacts.includes(username)) continue;
+
+      const sessions = userSessions.get(watcherName);
+      if (!sessions) continue;
+      sessions.forEach((client) => {
+        if (client.readyState === 1) {
+          try { client.send(envelope); } catch (_) {}
+        }
+      });
+    }
+  }
+
+  function sendContactsList(username, ws) {
+    const res = authStore.getContacts(username);
+    if (!res.ok) {
+      ws.send(JSON.stringify({ type: 'contacts-error', message: res.error }));
+      return;
+    }
+
+    const contacts = res.contacts || [];
+    const list = contacts.map((name) => buildStatusPayload(name));
+    ws.send(JSON.stringify({ type: 'contacts-list', contacts: list }));
+  }
+
   setInterval(() => {
     for (const [code, members] of rooms) {
       if (members.size === 0) rooms.delete(code);
@@ -93,14 +183,40 @@ function startSignalingServer() {
     const clientId = Math.random().toString(36).slice(2, 8);
     let clientRoom = null;
     let clientRole = null;
+    let username = null;
+    let initialized = false;
 
     console.log(`[+] Client ${clientId} connecté (${ip})`);
 
     const joinTimeout = setTimeout(() => {
-      if (!clientRoom) {
-        ws.close(1008, 'Join timeout');
+      if (!initialized) {
+        ws.close(1008, 'Init timeout');
       }
     }, 10_000);
+
+    function bindUser(newUsername) {
+      if (username && userSessions.has(username)) {
+        const sessions = userSessions.get(username);
+        sessions.delete(ws);
+        if (sessions.size === 0) {
+          userSessions.delete(username);
+        }
+        updatePresenceOnline(username);
+        notifyContactsOfStatus(username);
+      }
+
+      username = newUsername || null;
+      if (!username) return;
+
+      let sessions = userSessions.get(username);
+      if (!sessions) {
+        sessions = new Set();
+        userSessions.set(username, sessions);
+      }
+      sessions.add(ws);
+      updatePresenceOnline(username);
+      notifyContactsOfStatus(username);
+    }
 
     ws.on('message', (data) => {
       let msg;
@@ -110,10 +226,121 @@ function startSignalingServer() {
         return;
       }
 
-      switch (msg.type) {
-        case 'join': {
-          clearTimeout(joinTimeout);
+      if (!initialized) {
+        initialized = true;
+        clearTimeout(joinTimeout);
+      }
 
+      switch (msg.type) {
+
+        // Authentification & contacts
+        case 'register': {
+          const { username: rawUser, password } = msg;
+          const result = authStore.registerUser(rawUser, password);
+          if (!result.ok) {
+            ws.send(JSON.stringify({ type: 'auth-error', message: result.error }));
+            return;
+          }
+
+          bindUser(result.user.username);
+
+          const contacts = (result.user.contacts || []).map((name) => buildStatusPayload(name));
+          ws.send(JSON.stringify({
+            type: 'auth-ok',
+            username: result.user.username,
+            contacts,
+            isNew: true,
+          }));
+          break;
+        }
+
+        case 'login': {
+          const { username: rawUser, password } = msg;
+          const result = authStore.validateUser(rawUser, password);
+          if (!result.ok) {
+            ws.send(JSON.stringify({ type: 'auth-error', message: result.error }));
+            return;
+          }
+
+          bindUser(result.user.username);
+
+          const contacts = (result.user.contacts || []).map((name) => buildStatusPayload(name));
+          ws.send(JSON.stringify({
+            type: 'auth-ok',
+            username: result.user.username,
+            contacts,
+          }));
+          break;
+        }
+
+        case 'logout': {
+          if (!username) {
+            ws.send(JSON.stringify({ type: 'auth-error', message: 'Non authentifié.' }));
+            break;
+          }
+          const oldUser = username;
+          bindUser(null);
+          ws.send(JSON.stringify({ type: 'auth-logged-out', username: oldUser }));
+          break;
+        }
+
+        case 'get-contacts': {
+          if (!username) {
+            ws.send(JSON.stringify({ type: 'auth-error', message: 'Non authentifié.' }));
+            break;
+          }
+          sendContactsList(username, ws);
+          break;
+        }
+
+        case 'add-contact': {
+          if (!username) {
+            ws.send(JSON.stringify({ type: 'auth-error', message: 'Non authentifié.' }));
+            break;
+          }
+          const contactName = msg.contact || msg.username;
+          const res = authStore.addContact(username, contactName);
+          if (!res.ok) {
+            ws.send(JSON.stringify({ type: 'contacts-error', message: res.error }));
+            break;
+          }
+          const contacts = (res.contacts || []).map((name) => buildStatusPayload(name));
+          ws.send(JSON.stringify({ type: 'contacts-list', contacts }));
+          notifyContactsOfStatus(username);
+          break;
+        }
+
+        case 'remove-contact': {
+          if (!username) {
+            ws.send(JSON.stringify({ type: 'auth-error', message: 'Non authentifié.' }));
+            break;
+          }
+          const contactName = msg.contact || msg.username;
+          const res = authStore.removeContact(username, contactName);
+          if (!res.ok) {
+            ws.send(JSON.stringify({ type: 'contacts-error', message: res.error }));
+            break;
+          }
+          const contacts = (res.contacts || []).map((name) => buildStatusPayload(name));
+          ws.send(JSON.stringify({ type: 'contacts-list', contacts }));
+          break;
+        }
+
+        case 'presence-info': {
+          if (!username) {
+            ws.send(JSON.stringify({ type: 'auth-error', message: 'Non authentifié.' }));
+            break;
+          }
+          const meta = {
+            host: msg.host || null,
+            mode: msg.mode === 'remote' ? 'remote' : 'local',
+          };
+          updatePresenceMeta(username, meta);
+          notifyContactsOfStatus(username);
+          break;
+        }
+
+        case 'join': {
           const code = (msg.room || '').toUpperCase().trim();
           if (!code || code.length < 3) {
             ws.send(JSON.stringify({ type: 'error', message: 'Code invalide' }));
@@ -147,6 +374,10 @@ function startSignalingServer() {
           }
 
           console.log(`[=] ${clientId} (${clientRole}) -> room "${code}" (${room.size} membres)`);
+          if (clientRole === 'broadcaster' && username) {
+            updatePresenceSharing(username, true, code);
+            notifyContactsOfStatus(username);
+          }
           break;
         }
 
@@ -176,6 +407,16 @@ function startSignalingServer() {
     ws.on('close', () => {
       clearTimeout(joinTimeout);
       cleanup();
+
+      if (username && userSessions.has(username)) {
+        const sessions = userSessions.get(username);
+        sessions.delete(ws);
+        if (sessions.size === 0) {
+          userSessions.delete(username);
+        }
+        updatePresenceOnline(username);
+        notifyContactsOfStatus(username);
+      }
     });
 
     ws.on('error', (err) => {
@@ -195,6 +436,14 @@ function startSignalingServer() {
 
       broadcast(clientRoom, ws, { type: 'peer-left', role: clientRole, id: clientId });
       console.log(`[-] ${clientId} (${clientRole}) quitte "${clientRoom}" (${room.size} restants)`);
+
+      if (username && clientRole === 'broadcaster') {
+        const p = ensurePresence(username);
+        if (p.roomCode === clientRoom) {
+          updatePresenceSharing(username, false, null);
+          notifyContactsOfStatus(username);
+        }
+      }
 
       if (room.size === 0) rooms.delete(clientRoom);
       clientRoom = null;
@@ -282,6 +531,32 @@ ipcMain.handle('get-signaling-port', () => PORT);
 ipcMain.handle('clipboard-write-text', (_event, text) => {
   clipboard.writeText(String(text || ''));
   return true;
+});
+
+ipcMain.handle('get-turn-credentials', async (_event, username) => {
+  const base = process.env.REMOTE_SIGNALING_URL;
+  if (!base) return null;
+
+  try {
+    const baseUrl = new URL(base);
+    if (baseUrl.protocol === 'wss:') baseUrl.protocol = 'https:';
+    else if (baseUrl.protocol === 'ws:') baseUrl.protocol = 'http:';
+
+    baseUrl.pathname = '/api/turn-credentials';
+    baseUrl.search = '';
+    baseUrl.searchParams.set('user', String(username || 'guest'));
+
+    const res = await fetch(baseUrl.toString());
+    if (!res.ok) {
+      console.error('get-turn-credentials: HTTP', res.status);
+      return null;
+    }
+    const data = await res.json();
+    return data;
+  } catch (err) {
+    console.error('get-turn-credentials failed:', err);
+    return null;
+  }
 });
 
 ipcMain.on('window-minimize', () => mainWindow.minimize());
