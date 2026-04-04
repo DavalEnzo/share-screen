@@ -104,6 +104,11 @@ function sanitizeHtmlNotes(raw) {
   html = html.replace(/<iframe[\s\S]*?<\/iframe>/gi, '');
   html = html.replace(/<object[\s\S]*?<\/object>/gi, '');
   html = html.replace(/<embed[\s\S]*?<\/embed>/gi, '');
+  // Certains outils/affichages GitHub ajoutent des "..." en fin de ligne
+  // lorsqu'un texte est tronqué visuellement. On les retire en fin de ligne
+  // pour éviter de couper les phrases dans le changelog.
+  html = html.replace(/\.{3}(?=\s*($|\r?\n))/g, '');
+  html = html.replace(/…(?=\s*($|\r?\n))/g, '');
   return html;
 }
 
@@ -255,7 +260,8 @@ async function init() {
     sendPresenceInfo();
   }
 
-  // Récupérer les infos de changelog stockées après une mise à jour auto
+  // 1) Récupérer les infos de changelog stockées après une mise à jour auto (pour le modal)
+  let modalShownFromUpdate = false;
   try {
     const raw = window.localStorage ? window.localStorage.getItem('lastUpdateInfo') : null;
     if (raw && appVersion) {
@@ -266,16 +272,34 @@ async function init() {
         state.hasChangelog = true;
         state.lastChangelog = { version: parsed.version, notes: text };
 
-        // Afficher un modal au démarrage avec les changements
-        showChangelogModal(parsed.version, text);
-
-        // Ne plus réafficher automatiquement au prochain démarrage
+        // Conserver un cache persistant pour les démarrages futurs
         if (window.localStorage) {
+          window.localStorage.setItem('cachedChangelog', JSON.stringify({ version: parsed.version, notes: text }));
           window.localStorage.removeItem('lastUpdateInfo');
         }
+
+        // Afficher un modal au démarrage avec les changements
+        showChangelogModal(parsed.version, text);
+        modalShownFromUpdate = true;
       }
     }
   } catch (_) {}
+
+  // 2) Si aucune info de mise à jour immédiate, recharger un changelog déjà mis en cache
+  if (!modalShownFromUpdate && appVersion && window.localStorage) {
+    try {
+      const cached = window.localStorage.getItem('cachedChangelog');
+      if (cached) {
+        const parsed = JSON.parse(cached);
+        if (parsed && parsed.version && parsed.notes && parsed.version === appVersion) {
+          const maxLen = 2000;
+          const text = String(parsed.notes).slice(0, maxLen);
+          state.hasChangelog = true;
+          state.lastChangelog = { version: parsed.version, notes: text };
+        }
+      }
+    } catch (_) {}
+  }
 }
 
 // ─── Navigation ───────────────────────────────────────────────────────────────
@@ -1791,6 +1815,11 @@ function setupUiBindings() {
           renderChangelogIntoAbout(res.version || state.appVersion, text);
           state.hasChangelog = true;
           state.lastChangelog = { version: res.version || state.appVersion, notes: text };
+          try {
+            if (window.localStorage) {
+              window.localStorage.setItem('cachedChangelog', JSON.stringify({ version: res.version || state.appVersion, notes: text }));
+            }
+          } catch (_) {}
         } catch (_) {
           notify('Erreur lors de la récupération du changelog.', 'error');
           return;
@@ -1816,7 +1845,10 @@ function setupUiBindings() {
       // Stocker les informations de changelog pour l'affichage au prochain démarrage
       try {
         if (window.localStorage && v) {
-          window.localStorage.setItem('lastUpdateInfo', JSON.stringify({ version: v, notes }));
+          const maxLen = 2000;
+          const text = String(notes || '').slice(0, maxLen);
+          window.localStorage.setItem('lastUpdateInfo', JSON.stringify({ version: v, notes: text }));
+          window.localStorage.setItem('cachedChangelog', JSON.stringify({ version: v, notes: text }));
         }
       } catch (_) {}
 
