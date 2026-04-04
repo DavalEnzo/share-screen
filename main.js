@@ -1,5 +1,6 @@
 require('dotenv').config();
 const { app, BrowserWindow, ipcMain, desktopCapturer, screen, session, clipboard } = require('electron');
+const { autoUpdater } = require('electron-updater');
 const DEFAULT_REMOTE_SIGNALING_URL = 'wss://share-screen-production.up.railway.app';
 
 // Réduire l'influence de la vsync et du throttling de fond sur le partage.
@@ -786,4 +787,34 @@ app.on('window-all-closed', () => {
 
 app.on('activate', () => {
   if (BrowserWindow.getAllWindows().length === 0) createWindow();
+});
+
+// ─── Auto-update (electron-updater) ─────────────────────────────────────────
+
+app.whenReady().then(() => {
+  if (!app.isPackaged) {
+    console.log('[autoUpdater] Désactivé en mode développement');
+    return;
+  }
+
+  autoUpdater.autoDownload = true;
+
+  autoUpdater.on('error', (err) => {
+    console.error('[autoUpdater] Erreur:', err == null ? 'inconnue' : err.message || err);
+  });
+
+  autoUpdater.on('update-available', (info) => {
+    console.log('[autoUpdater] Mise à jour disponible', info.version);
+  });
+
+  autoUpdater.on('update-downloaded', (info) => {
+    console.log('[autoUpdater] Mise à jour téléchargée', info.version);
+    // Applique la mise à jour au prochain redémarrage
+    autoUpdater.quitAndInstall(false, true);
+  });
+
+  // Vérifie immédiatement au démarrage
+  autoUpdater.checkForUpdatesAndNotify().catch((err) => {
+    console.error('[autoUpdater] checkForUpdatesAndNotify a échoué:', err);
+  });
 });

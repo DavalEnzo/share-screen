@@ -1,6 +1,6 @@
 {
   "name": "screenshare-app",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Application de partage d'écran 1080p60",
   "main": "main.js",
   "author": {
@@ -14,10 +14,12 @@
     "start:safe": "electron .",
     "build": "electron-builder",
     "build:portable": "electron-builder --win portable",
-    "build:all": "electron-builder --win nsis portable"
+    "build:all": "electron-builder --win nsis portable",
+    "publish": "electron-builder --publish always"
   },
   "dependencies": {
     "dotenv": "^17.4.0",
+    "electron-updater": "^6.1.8",
     "ws": "^8.16.0"
   },
   "devDependencies": {
@@ -30,6 +32,13 @@
     "directories": {
       "output": "dist"
     },
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "DavalEnzo",
+        "repo": "share-screen"
+      }
+    ],
     "win": {
       "target": [
         "nsis",
