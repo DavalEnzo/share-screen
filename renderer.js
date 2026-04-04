@@ -109,6 +109,9 @@ function sanitizeHtmlNotes(raw) {
   // pour éviter de couper les phrases dans le changelog.
   html = html.replace(/\.{3}(?=\s*($|\r?\n))/g, '');
   html = html.replace(/…(?=\s*($|\r?\n))/g, '');
+  // Et si une nouvelle ligne commence par des ellipses ("...changelog"),
+  // on les supprime aussi pour recoller la phrase proprement.
+  html = html.replace(/(^|\r?\n)\s*(?:\.{3}|…)(?=\S)/g, '$1');
   return html;
 }
 
