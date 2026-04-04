@@ -775,6 +775,27 @@ ipcMain.handle('window-set-fullscreen', (_event, enabled) => {
 });
 ipcMain.on('window-close', () => mainWindow.close());
 
+ipcMain.handle('check-for-updates', async () => {
+  if (!app.isPackaged) {
+    return { ok: false, message: 'Mises à jour automatiques indisponibles en mode développement.' };
+  }
+
+  try {
+    const result = await autoUpdater.checkForUpdates();
+    if (!result) {
+      return { ok: true, message: 'Aucune mise à jour trouvée.' };
+    }
+    const { updateInfo } = result;
+    if (!updateInfo || !updateInfo.version) {
+      return { ok: true, message: 'Aucune mise à jour disponible.' };
+    }
+    return { ok: true, message: `Version ${updateInfo.version} disponible. Le téléchargement démarre...` };
+  } catch (err) {
+    console.error('[autoUpdater] check-for-updates (manuel) a échoué:', err);
+    return { ok: false, message: 'Erreur lors de la recherche de mises à jour.' };
+  }
+});
+
 app.whenReady().then(() => {
   startSignalingServer();
   createWindow();

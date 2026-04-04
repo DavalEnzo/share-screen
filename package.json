@@ -36,7 +36,8 @@
       {
         "provider": "github",
         "owner": "DavalEnzo",
-        "repo": "share-screen"
+        "repo": "share-screen",
+        "releaseType": "release"
       }
     ],
     "win": {

@@ -1626,6 +1626,23 @@ function setupUiBindings() {
   document.getElementById('contactsList')?.addEventListener('click', handleContactsListClick);
   document.getElementById('incomingRequestsList')?.addEventListener('click', handleFriendRequestsClick);
   document.getElementById('outgoingRequestsList')?.addEventListener('click', handleFriendRequestsClick);
+  document.getElementById('checkUpdatesBtn')?.addEventListener('click', async () => {
+    if (!window.electronAPI?.checkForUpdates) {
+      notify('Mises à jour indisponibles dans cette version.', 'error');
+      return;
+    }
+    notify('Recherche de mises à jour...', 'info');
+    try {
+      const res = await window.electronAPI.checkForUpdates();
+      if (!res) {
+        notify('Aucune réponse du système de mise à jour.', 'error');
+        return;
+      }
+      notify(res.message || (res.ok ? 'Recherche terminée.' : 'Erreur mise à jour.'), res.ok ? 'success' : 'error');
+    } catch (e) {
+      notify('Erreur lors de la recherche de mises à jour.', 'error');
+    }
+  });
 
   document.getElementById('joinCodeInput')?.addEventListener('input', (event) => {
     event.target.value = event.target.value.toUpperCase();
