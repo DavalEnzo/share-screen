@@ -66,12 +66,12 @@ function renderChangelogIntoAbout(version, notes) {
   title.style.marginBottom = '6px';
   title.textContent = `Nouveautés de la version v${version}`;
 
-  const body = document.createElement('pre');
-  body.style.whiteSpace = 'pre-wrap';
+  const body = document.createElement('div');
   body.style.fontFamily = 'var(--mono)';
   body.style.fontSize = '11px';
   body.style.color = 'var(--text-dim)';
-  body.textContent = text;
+  body.style.whiteSpace = 'pre-wrap';
+  body.innerHTML = sanitizeHtmlNotes(text);
 
   aboutChangelog.appendChild(title);
   aboutChangelog.appendChild(body);
@@ -86,7 +86,7 @@ function showChangelogModal(version, notes) {
   const maxLen = 2000;
   const text = String(notes || '').slice(0, maxLen);
   subtitle.textContent = `Nouveautés de la version v${version}`;
-  bodyEl.textContent = text;
+  bodyEl.innerHTML = sanitizeHtmlNotes(text);
   overlay.style.display = 'flex';
 }
 
@@ -94,6 +94,17 @@ function hideChangelogModal() {
   const overlay = document.getElementById('changelogModal');
   if (!overlay) return;
   overlay.style.display = 'none';
+}
+
+function sanitizeHtmlNotes(raw) {
+  let html = String(raw || '');
+  // Retirer les balises potentiellement dangereuses
+  html = html.replace(/<script[\s\S]*?<\/script>/gi, '');
+  html = html.replace(/<style[\s\S]*?<\/style>/gi, '');
+  html = html.replace(/<iframe[\s\S]*?<\/iframe>/gi, '');
+  html = html.replace(/<object[\s\S]*?<\/object>/gi, '');
+  html = html.replace(/<embed[\s\S]*?<\/embed>/gi, '');
+  return html;
 }
 
 // ─── ICE config (STUN public + TURN dynamique) ──────────────────────────────
