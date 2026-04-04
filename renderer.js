@@ -49,7 +49,52 @@ const state = {
   receiverJoinHost: 'localhost',
   hasChangelog: false,
   appVersion: '',
+  lastChangelog: null,
 };
+
+function renderChangelogIntoAbout(version, notes) {
+  const aboutChangelog = document.getElementById('aboutChangelog');
+  if (!aboutChangelog) return;
+  const maxLen = 2000;
+  const text = String(notes || '').slice(0, maxLen);
+  aboutChangelog.innerHTML = '';
+
+  const title = document.createElement('div');
+  title.style.fontFamily = 'var(--mono)';
+  title.style.fontSize = '12px';
+  title.style.fontWeight = '700';
+  title.style.marginBottom = '6px';
+  title.textContent = `Nouveautés de la version v${version}`;
+
+  const body = document.createElement('pre');
+  body.style.whiteSpace = 'pre-wrap';
+  body.style.fontFamily = 'var(--mono)';
+  body.style.fontSize = '11px';
+  body.style.color = 'var(--text-dim)';
+  body.textContent = text;
+
+  aboutChangelog.appendChild(title);
+  aboutChangelog.appendChild(body);
+}
+
+function showChangelogModal(version, notes) {
+  const overlay = document.getElementById('changelogModal');
+  const subtitle = document.getElementById('changelogModalSubtitle');
+  const bodyEl = document.getElementById('changelogModalBody');
+  if (!overlay || !subtitle || !bodyEl) return;
+
+  const maxLen = 2000;
+  const text = String(notes || '').slice(0, maxLen);
+  subtitle.textContent = `Nouveautés de la version v${version}`;
+  bodyEl.textContent = text;
+  overlay.style.display = 'flex';
+}
+
+function hideChangelogModal() {
+  const overlay = document.getElementById('changelogModal');
+  if (!overlay) return;
+  overlay.style.display = 'none';
+}
 
 // ─── ICE config (STUN public + TURN dynamique) ──────────────────────────────
 const BASE_ICE_SERVERS = [
@@ -199,36 +244,23 @@ async function init() {
     sendPresenceInfo();
   }
 
-  // Afficher le changelog de la dernière mise à jour, si disponible
+  // Récupérer les infos de changelog stockées après une mise à jour auto
   try {
     const raw = window.localStorage ? window.localStorage.getItem('lastUpdateInfo') : null;
     if (raw && appVersion) {
       const parsed = JSON.parse(raw);
       if (parsed && parsed.version && parsed.notes && parsed.version === appVersion) {
-        const aboutChangelog = document.getElementById('aboutChangelog');
-        if (aboutChangelog) {
-          const maxLen = 2000;
-          const text = String(parsed.notes).slice(0, maxLen);
-          aboutChangelog.innerHTML = '';
+        const maxLen = 2000;
+        const text = String(parsed.notes).slice(0, maxLen);
+        state.hasChangelog = true;
+        state.lastChangelog = { version: parsed.version, notes: text };
 
-          const title = document.createElement('div');
-          title.style.fontFamily = 'var(--mono)';
-          title.style.fontSize = '12px';
-          title.style.fontWeight = '700';
-          title.style.marginBottom = '6px';
-          title.textContent = `Nouveautés de la version v${parsed.version}`;
+        // Afficher un modal au démarrage avec les changements
+        showChangelogModal(parsed.version, text);
 
-          const body = document.createElement('pre');
-          body.style.whiteSpace = 'pre-wrap';
-          body.style.fontFamily = 'var(--mono)';
-          body.style.fontSize = '11px';
-          body.style.color = 'var(--text-dim)';
-          body.textContent = text;
-
-          aboutChangelog.appendChild(title);
-          aboutChangelog.appendChild(body);
-          aboutChangelog.style.display = 'block';
-          state.hasChangelog = true;
+        // Ne plus réafficher automatiquement au prochain démarrage
+        if (window.localStorage) {
+          window.localStorage.removeItem('lastUpdateInfo');
         }
       }
     }
@@ -1711,6 +1743,18 @@ function setupUiBindings() {
     el.addEventListener('click', () => selectPreset(el));
   });
 
+  document.getElementById('changelogModalCloseBtn')?.addEventListener('click', () => {
+    hideChangelogModal();
+  });
+  document.getElementById('changelogModalOkBtn')?.addEventListener('click', () => {
+    hideChangelogModal();
+  });
+  document.getElementById('changelogModal')?.addEventListener('click', (event) => {
+    if (event.target === event.currentTarget) {
+      hideChangelogModal();
+    }
+  });
+
   document.getElementById('showChangelogBtn')?.addEventListener('click', async () => {
     const container = document.getElementById('aboutChangelog');
     const btn = document.getElementById('showChangelogBtn');
@@ -1718,42 +1762,28 @@ function setupUiBindings() {
 
     // Si on n'a pas encore de changelog, tenter de le récupérer depuis GitHub
     if (!state.hasChangelog || !container.textContent.trim()) {
-      if (!window.electronAPI?.getReleaseNotes || !state.appVersion) {
+      if (state.lastChangelog && state.lastChangelog.version && state.lastChangelog.notes) {
+        renderChangelogIntoAbout(state.lastChangelog.version, state.lastChangelog.notes);
+      } else if (!window.electronAPI?.getReleaseNotes || !state.appVersion) {
         notify('Aucun changelog disponible pour cette version.', 'info');
         return;
-      }
+      } else {
+        try {
+          const res = await window.electronAPI.getReleaseNotes(state.appVersion);
+          if (!res || !res.ok || !res.notes) {
+            notify(res && res.message ? res.message : 'Aucun changelog disponible pour cette version.', 'info');
+            return;
+          }
 
-      try {
-        const res = await window.electronAPI.getReleaseNotes(state.appVersion);
-        if (!res || !res.ok || !res.notes) {
-          notify(res && res.message ? res.message : 'Aucun changelog disponible pour cette version.', 'info');
+          const maxLen = 2000;
+          const text = String(res.notes).slice(0, maxLen);
+          renderChangelogIntoAbout(res.version || state.appVersion, text);
+          state.hasChangelog = true;
+          state.lastChangelog = { version: res.version || state.appVersion, notes: text };
+        } catch (_) {
+          notify('Erreur lors de la récupération du changelog.', 'error');
           return;
         }
-
-        const maxLen = 2000;
-        const text = String(res.notes).slice(0, maxLen);
-        container.innerHTML = '';
-
-        const title = document.createElement('div');
-        title.style.fontFamily = 'var(--mono)';
-        title.style.fontSize = '12px';
-        title.style.fontWeight = '700';
-        title.style.marginBottom = '6px';
-        title.textContent = `Nouveautés de la version v${res.version || state.appVersion}`;
-
-        const body = document.createElement('pre');
-        body.style.whiteSpace = 'pre-wrap';
-        body.style.fontFamily = 'var(--mono)';
-        body.style.fontSize = '11px';
-        body.style.color = 'var(--text-dim)';
-        body.textContent = text;
-
-        container.appendChild(title);
-        container.appendChild(body);
-        state.hasChangelog = true;
-      } catch (_) {
-        notify('Erreur lors de la récupération du changelog.', 'error');
-        return;
       }
     }
 
@@ -1780,6 +1810,7 @@ function setupUiBindings() {
       } catch (_) {}
 
       state.hasChangelog = true;
+      state.lastChangelog = { version: v, notes };
       const container = document.getElementById('aboutChangelog');
       const btn = document.getElementById('showChangelogBtn');
       if (container && btn) {
