@@ -218,12 +218,7 @@ async function init() {
   ]);
   state.localIp = ip;
   state.signalingPort = port;
-  state.mode = useRemoteSignaling() ? 'remote' : 'local';
-
-  document.getElementById('localIpField').value = useRemoteSignaling() ? 'Serveur distant' : ip;
   document.getElementById('localIpDisplay').textContent = useRemoteSignaling() ? 'Mode: distant' : `IP: ${ip}`;
-  document.getElementById('settingsIp').textContent = useRemoteSignaling() ? remoteSignalingUrl : ip;
-  document.getElementById('settingsPort').textContent = useRemoteSignaling() ? 'WSS/443' : port;
 
   // Pré-remplir le champ host côté récepteur
   if (useRemoteSignaling()) {
@@ -889,13 +884,6 @@ function joinContactShare(contactName, roomCode, host, mode) {
   }, 50);
 }
 
-// ─── Mode selector ────────────────────────────────────────────────────────────
-function selectMode(mode) {
-  state.mode = mode;
-  document.querySelectorAll('.mode-card').forEach(c => c.classList.remove('selected'));
-  document.getElementById(`mode-${mode}`).classList.add('selected');
-}
-
 // ─── Quality selectors ────────────────────────────────────────────────────────
 function selectRes(el) {
   document.querySelectorAll('#resPills .quality-pill').forEach(p => p.classList.remove('active'));
@@ -955,7 +943,7 @@ async function loadSources() {
     const sources = await window.electronAPI.getSources();
     grid.innerHTML = '';
 
-    sources.forEach(src => {
+    sources.forEach((src, index) => {
       const div = document.createElement('div');
       div.className = 'source-item';
       div.dataset.id = src.id;
@@ -978,6 +966,12 @@ async function loadSources() {
         div.classList.add('selected');
         state.selectedSourceId = src.id;
       };
+
+      // Sélectionner automatiquement la première source au chargement
+      if (index === 0) {
+        div.classList.add('selected');
+        state.selectedSourceId = src.id;
+      }
       grid.appendChild(div);
     });
 
@@ -1007,6 +1001,9 @@ async function getCaptureStream() {
         mandatory: { chromeMediaSource: 'desktop' }
       } : false,
       video: {
+        // Certains environnements ne respectent la contrainte cursor
+        // qu'en dehors du bloc mandatory.
+        cursor: showCursor ? 'always' : 'never',
         mandatory: {
           chromeMediaSource: 'desktop',
           chromeMediaSourceId: state.selectedSourceId,
@@ -1081,6 +1078,10 @@ async function startSharing() {
         height: { ideal: state.resolution },
         frameRate: { ideal: state.fps },
       }).catch(() => {}); // Ignore if not supported
+
+      // Renforcer la contrainte de curseur au niveau de la piste
+      const showCursor = document.getElementById('showCursor').checked;
+      await videoTrack.applyConstraints({ cursor: showCursor ? 'always' : 'never' }).catch(() => {});
     }
 
     // Show preview
@@ -1148,7 +1149,7 @@ function stopSharing() {
   document.getElementById('previewVideo').srcObject = null;
   document.getElementById('statPeers').textContent = '0';
 
-  updateStatus('Déconnecté', 'off');
+  updateStatus('Pas en partage', 'off');
   updateTitle('Prêt');
   notify('Partage arrêté.', 'info');
 }
@@ -1728,9 +1729,6 @@ function setupUiBindings() {
   document.getElementById('nav-settings')?.addEventListener('click', () => showPage('settings'));
   document.getElementById('nav-info')?.addEventListener('click', () => showPage('info'));
 
-  document.getElementById('mode-local')?.addEventListener('click', () => selectMode('local'));
-  document.getElementById('mode-code')?.addEventListener('click', () => selectMode('code'));
-
   document.getElementById('refreshSourcesBtn')?.addEventListener('click', loadSources);
   document.getElementById('copyCodeBtn')?.addEventListener('click', copyRoomCode);
   document.getElementById('startBtn')?.addEventListener('click', startSharing);
@@ -1873,3 +1871,5 @@ function setupUiBindings() {
 // ─── Boot ──────────────────────────────────────────────────────────────────────
 setupUiBindings();
 init();
+// Charger automatiquement les sources de capture au démarrage
+loadSources().catch(() => {});

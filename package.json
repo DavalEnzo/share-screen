@@ -1,7 +1,7 @@
 {
   "name": "screenshare-app",
-  "version": "1.0.87",
-  "description": "Application de partage d'écran 1080p60",
+  "version": "1.0.9",
+  "description": "Application de partage d'écran basée sur Electron et WebRTC",
   "main": "main.js",
   "author": {
     "name": "Enzo D.",
@@ -41,6 +41,7 @@
       }
     ],
     "win": {
+      "icon": "icon.ico",
       "target": [
         "nsis",
         "portable"

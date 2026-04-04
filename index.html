@@ -2,9 +2,10 @@
 <html lang="fr">
 <head>
   <meta charset="UTF-8">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data: blob:; connect-src 'self' ws://*:* wss://*; media-src *;">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://cdnjs.cloudflare.com; font-src https://fonts.gstatic.com https://cdnjs.cloudflare.com; img-src 'self' data: blob:; connect-src 'self' ws://*:* wss://*; media-src *;">
   <title>ScreenShare Pro</title>
   <link href="https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=Syne:wght@400;600;800&display=swap" rel="stylesheet">
+  <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css" rel="stylesheet">
   <style>
     :root {
       --bg: #09090e;
@@ -70,6 +71,12 @@
       align-items: center;
       justify-content: center;
       font-size: 14px;
+    }
+
+    .logo-icon.logo-icon-large {
+      width: 40px;
+      height: 40px;
+      font-size: 20px;
     }
 
     .titlebar-title { color: var(--text); }
@@ -243,31 +250,6 @@
     /* Two column layout */
     .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
     .grid-3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
-
-    /* Mode selector */
-    .mode-selector {
-      display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 10px;
-    }
-
-    .mode-card {
-      padding: 16px;
-      border-radius: 10px;
-      border: 2px solid var(--border);
-      cursor: pointer;
-      transition: all 0.2s;
-      display: flex;
-      flex-direction: column;
-      gap: 6px;
-    }
-
-    .mode-card:hover { border-color: rgba(0,229,255,0.3); background: rgba(0,229,255,0.03); }
-    .mode-card.selected { border-color: var(--accent); background: rgba(0,229,255,0.06); }
-
-    .mode-icon { font-size: 22px; }
-    .mode-name { font-size: 13px; font-weight: 700; }
-    .mode-desc { font-size: 11px; color: var(--text-dim); font-family: var(--mono); line-height: 1.4; }
 
     /* Source picker */
     .sources-grid {
@@ -843,7 +825,7 @@
   <!-- Titlebar -->
   <div class="titlebar">
     <div class="titlebar-logo">
-      <div class="logo-icon">📡</div>
+      <div class="logo-icon"><i class="fa-solid fa-tower-broadcast"></i></div>
       <div>
         <div class="titlebar-title">ScreenShare Pro</div>
       </div>
@@ -866,32 +848,28 @@
       <div class="sidebar-nav">
         <div class="nav-label">Navigation</div>
         <div class="nav-item active" id="nav-share">
-          <span class="nav-icon">📤</span> Partager
+          <span class="nav-icon"><i class="fa-solid fa-up-right-from-square"></i></span> Partager
         </div>
         <div class="nav-item" id="nav-receive">
-          <span class="nav-icon">📥</span> Recevoir
+          <span class="nav-icon"><i class="fa-solid fa-download"></i></span> Recevoir
         </div>
         <div class="divider"></div>
         <div class="nav-label">Outils</div>
         <div class="nav-item" id="nav-contacts">
-          <span class="nav-icon">👥</span> Contacts
+          <span class="nav-icon"><i class="fa-solid fa-users"></i></span> Contacts
         </div>
         <div class="nav-item" id="nav-settings">
-          <span class="nav-icon">⚙️</span> Paramètres
+          <span class="nav-icon"><i class="fa-solid fa-gear"></i></span> Paramètres
         </div>
         <div class="nav-item" id="nav-info">
-          <span class="nav-icon">ℹ️</span> À propos
+          <span class="nav-icon"><i class="fa-solid fa-circle-info"></i></span> À propos
         </div>
       </div>
 
       <div class="status-bar">
         <div class="status-item">
-          <div class="status-dot green" id="serverDot"></div>
-          <span id="serverStatus">Serveur local actif</span>
-        </div>
-        <div class="status-item">
           <div class="status-dot" id="connDot"></div>
-          <span id="connStatus">Non connecté</span>
+          <span id="connStatus">Pas en partage</span>
         </div>
         <div class="status-item" style="margin-top:4px">
           <span id="localIpDisplay" style="font-size:10px">IP: —</span>
@@ -907,35 +885,15 @@
         <div class="page-header">
           <div>
             <div class="page-title">Partager <span>l'écran</span></div>
-            <div class="page-sub">Diffusez votre écran en 1080p à 60 fps</div>
+            <div class="page-sub">Diffusez votre écran</div>
           </div>
           <div id="shareHeaderBadge"></div>
-        </div>
-
-        <!-- Mode -->
-        <div class="card">
-          <div class="card-header">
-            <div class="card-icon cyan">🎯</div>
-            <div class="card-title">Mode de partage</div>
-          </div>
-          <div class="mode-selector">
-            <div class="mode-card selected" id="mode-local">
-              <div class="mode-icon">🏠</div>
-              <div class="mode-name">Réseau local</div>
-              <div class="mode-desc">Partage via LAN — latence minimale, aucun cloud</div>
-            </div>
-            <div class="mode-card" id="mode-code">
-              <div class="mode-icon">🔐</div>
-              <div class="mode-name">Code de session</div>
-              <div class="mode-desc">Accès via code partageable — fonctionne à distance</div>
-            </div>
-          </div>
         </div>
 
         <!-- Source -->
         <div class="card">
           <div class="card-header">
-            <div class="card-icon purple">🖥️</div>
+            <div class="card-icon purple"><i class="fa-solid fa-display"></i></div>
             <div class="card-title">Source à capturer</div>
             <button class="btn btn-ghost" id="refreshSourcesBtn" style="margin-left:auto;padding:6px 12px;font-size:11px">↺ Actualiser</button>
           </div>
@@ -950,7 +908,7 @@
         <div class="grid-2">
           <div class="card">
             <div class="card-header">
-              <div class="card-icon green">✨</div>
+              <div class="card-icon green"><i class="fa-solid fa-wand-magic-sparkles"></i></div>
               <div class="card-title">Qualité vidéo</div>
             </div>
             <div style="display:flex; flex-direction:column; gap:12px">
@@ -992,8 +950,8 @@
 
           <div class="card">
             <div class="card-header">
-              <div class="card-icon pink">🎛️</div>
-              <div class="card-title">Options audio</div>
+              <div class="card-icon pink"><i class="fa-solid fa-sliders"></i></div>
+              <div class="card-title">Options</div>
             </div>
             <div style="display:flex; flex-direction:column; gap:4px">
               <div class="toggle-row">
@@ -1024,10 +982,10 @@
         <!-- Room info + Actions -->
         <div class="card" id="roomInfoCard">
           <div class="card-header">
-            <div class="card-icon cyan">🔗</div>
+            <div class="card-icon cyan"><i class="fa-solid fa-link"></i></div>
             <div class="card-title">Connexion</div>
           </div>
-          <div class="grid-2" style="gap:16px; align-items:start">
+          <div class="grid-2" style="gap:16px; align-items:end">
             <div style="display:flex; flex-direction:column; gap:10px">
               <div class="field">
                 <label>Code de session</label>
@@ -1036,12 +994,8 @@
                   <button class="copy-btn" id="copyCodeBtn">Copier</button>
                 </div>
               </div>
-              <div class="field">
-                <label>Adresse IP locale</label>
-                <input class="input" id="localIpField" readonly placeholder="Chargement...">
-              </div>
             </div>
-            <div style="display:flex; flex-direction:column; gap:8px; justify-content:flex-end">
+            <div style="display:flex; flex-direction:column; gap:8px; margin-bottom: 5px;">
               <button class="btn btn-primary btn-full" id="startBtn">
                 📡 Démarrer le partage
               </button>
@@ -1055,7 +1009,7 @@
         <!-- Preview -->
         <div class="card" id="previewCard" style="display:none">
           <div class="card-header">
-            <div class="card-icon green">👁️</div>
+            <div class="card-icon green"><i class="fa-solid fa-eye"></i></div>
             <div class="card-title">Aperçu local</div>
             <div class="badge green" style="margin-left:auto">EN DIRECT</div>
           </div>
@@ -1092,7 +1046,7 @@
         <div class="grid-2">
           <div class="card">
             <div class="card-header">
-              <div class="card-icon cyan">🔗</div>
+              <div class="card-icon cyan"><i class="fa-solid fa-link"></i></div>
               <div class="card-title">Rejoindre par code</div>
             </div>
             <div style="display:flex; flex-direction:column; gap:12px">
@@ -1112,7 +1066,7 @@
 
           <div class="card">
             <div class="card-header">
-              <div class="card-icon purple">📶</div>
+              <div class="card-icon purple"><i class="fa-solid fa-signal"></i></div>
               <div class="card-title">État de la connexion</div>
             </div>
             <div id="receiveStatus" style="display:flex; flex-direction:column; gap:8px; color:var(--text-dim); font-family:var(--mono); font-size:12px">
@@ -1127,7 +1081,7 @@
         <!-- Remote video -->
         <div class="card" id="remoteCard" style="display:none">
           <div class="card-header">
-            <div class="card-icon pink">📺</div>
+            <div class="card-icon pink"><i class="fa-solid fa-tv"></i></div>
             <div class="card-title">Flux reçu</div>
             <button class="btn btn-ghost" id="fullscreenBtn" style="margin-left:auto;padding:6px 12px;font-size:11px">⛶ Plein écran</button>
             <button class="btn btn-danger" id="leaveBtn" style="padding:6px 12px;font-size:11px">✕ Quitter</button>
@@ -1165,7 +1119,7 @@
         <div class="grid-2">
           <div class="card">
             <div class="card-header">
-              <div class="card-icon cyan">👤</div>
+              <div class="card-icon cyan"><i class="fa-solid fa-user"></i></div>
               <div class="card-title">Compte</div>
             </div>
             <div style="display:flex; flex-direction:column; gap:12px">
@@ -1189,7 +1143,7 @@
 
           <div class="card">
             <div class="card-header">
-              <div class="card-icon purple">👥</div>
+              <div class="card-icon purple"><i class="fa-solid fa-users"></i></div>
               <div class="card-title">Mes contacts</div>
             </div>
             <div style="display:flex; flex-direction:column; gap:10px">
@@ -1232,32 +1186,7 @@
 
         <div class="card">
           <div class="card-header">
-            <div class="card-icon cyan">🌐</div>
-            <div class="card-title">Réseau & Serveur</div>
-          </div>
-          <div>
-            <div class="info-row">
-              <span class="info-key">Port de signalisation</span>
-              <span class="info-val accent" id="settingsPort">8765</span>
-            </div>
-            <div class="info-row">
-              <span class="info-key">Adresse IP locale</span>
-              <span class="info-val accent" id="settingsIp">—</span>
-            </div>
-            <div class="info-row">
-              <span class="info-key">Protocole WebRTC</span>
-              <span class="info-val">VP8 / H.264</span>
-            </div>
-            <div class="info-row">
-              <span class="info-key">STUN Server</span>
-              <span class="info-val">stun:stun.l.google.com:19302</span>
-            </div>
-          </div>
-        </div>
-
-        <div class="card">
-          <div class="card-header">
-            <div class="card-icon purple">🎬</div>
+            <div class="card-icon purple"><i class="fa-solid fa-film"></i></div>
             <div class="card-title">Encodage vidéo</div>
           </div>
           <div class="toggle-row">
@@ -1293,12 +1222,14 @@
         </div>
         <div class="card">
           <div style="text-align:center; padding: 12px 0 24px">
-            <div style="font-size:48px">📡</div>
+            <div style="display:flex; justify-content:center; margin-bottom:12px">
+              <div class="logo-icon logo-icon-large"><i class="fa-solid fa-tower-broadcast"></i></div>
+            </div>
             <div style="font-size:22px; font-weight:800; margin-top:12px">ScreenShare Pro</div>
             <div id="aboutVersion" style="color:var(--text-dim); font-family:var(--mono); font-size:12px; margin-top:4px">v? • Electron + WebRTC</div>
             <div style="margin-top:20px; color:var(--text-dim); font-size:13px; line-height:1.7; max-width: 420px; margin-inline: auto">
               Partage d'écran local en haute qualité (jusqu'à 1080p60) via WebRTC.
-              Aucun serveur cloud, aucune inscription. Fonctionne entièrement en local ou sur réseau LAN.
+              Aucun serveur cloud, aucune inscription. Fonctionne entièrement en local ou sur Internet.
             </div>
             <div style="margin-top:18px; display:flex; justify-content:center; gap:8px; flex-wrap:wrap">
               <button class="btn btn-primary" id="checkUpdatesBtn" style="padding:8px 16px;font-size:12px">Rechercher des mises à jour</button>
@@ -1311,7 +1242,6 @@
           <div>
             <div class="info-row"><span class="info-key">Moteur</span><span class="info-val">Electron + Node.js</span></div>
             <div class="info-row"><span class="info-key">Protocole</span><span class="info-val">WebRTC (P2P)</span></div>
-            <div class="info-row"><span class="info-key">Signalisation</span><span class="info-val">WebSocket local</span></div>
             <div class="info-row"><span class="info-key">Résolution max</span><span class="info-val accent">1440p</span></div>
             <div class="info-row"><span class="info-key">FPS max</span><span class="info-val accent">60 fps</span></div>
           </div>
