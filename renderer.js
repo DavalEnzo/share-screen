@@ -47,6 +47,7 @@ const state = {
   receiverOfferTimeout: null,
   receiverJoinCode: '',
   receiverJoinHost: 'localhost',
+  hasChangelog: false,
 };
 
 // ─── ICE config (STUN public + TURN dynamique) ──────────────────────────────
@@ -177,12 +178,14 @@ async function init() {
     notify('Mode local — configurez REMOTE_SIGNALING_URL pour accès public', 'info');
   }
 
+  let appVersion = '';
   if (window.electronAPI?.getAppVersion) {
     try {
       const version = await window.electronAPI.getAppVersion();
+      appVersion = String(version || '');
       const aboutEl = document.getElementById('aboutVersion');
-      if (aboutEl && version) {
-        aboutEl.textContent = `v${version} • Electron + WebRTC`;
+      if (aboutEl && appVersion) {
+        aboutEl.textContent = `v${appVersion} • Electron + WebRTC`;
       }
     } catch (_) {}
   }
@@ -193,6 +196,41 @@ async function init() {
   if (state.currentUser && state.authWs && state.authWs.readyState === WebSocket.OPEN) {
     sendPresenceInfo();
   }
+
+  // Afficher le changelog de la dernière mise à jour, si disponible
+  try {
+    const raw = window.localStorage ? window.localStorage.getItem('lastUpdateInfo') : null;
+    if (raw && appVersion) {
+      const parsed = JSON.parse(raw);
+      if (parsed && parsed.version && parsed.notes && parsed.version === appVersion) {
+        const aboutChangelog = document.getElementById('aboutChangelog');
+        if (aboutChangelog) {
+          const maxLen = 2000;
+          const text = String(parsed.notes).slice(0, maxLen);
+          aboutChangelog.innerHTML = '';
+
+          const title = document.createElement('div');
+          title.style.fontFamily = 'var(--mono)';
+          title.style.fontSize = '12px';
+          title.style.fontWeight = '700';
+          title.style.marginBottom = '6px';
+          title.textContent = `Nouveautés de la version v${parsed.version}`;
+
+          const body = document.createElement('pre');
+          body.style.whiteSpace = 'pre-wrap';
+          body.style.fontFamily = 'var(--mono)';
+          body.style.fontSize = '11px';
+          body.style.color = 'var(--text-dim)';
+          body.textContent = text;
+
+          aboutChangelog.appendChild(title);
+          aboutChangelog.appendChild(body);
+          aboutChangelog.style.display = 'block';
+          state.hasChangelog = true;
+        }
+      }
+    }
+  } catch (_) {}
 }
 
 // ─── Navigation ───────────────────────────────────────────────────────────────
@@ -1671,12 +1709,48 @@ function setupUiBindings() {
     el.addEventListener('click', () => selectPreset(el));
   });
 
+  document.getElementById('showChangelogBtn')?.addEventListener('click', () => {
+    const container = document.getElementById('aboutChangelog');
+    const btn = document.getElementById('showChangelogBtn');
+    if (!container) return;
+
+    if (!state.hasChangelog || !container.textContent.trim()) {
+      notify('Aucun changelog disponible pour cette version.', 'info');
+      return;
+    }
+
+    const isVisible = container.style.display !== 'none' && container.style.display !== '' ? true : false;
+    if (isVisible) {
+      container.style.display = 'none';
+      if (btn) btn.textContent = 'Voir le changelog';
+    } else {
+      container.style.display = 'block';
+      if (btn) btn.textContent = 'Masquer le changelog';
+    }
+  });
+
   if (window.electronAPI?.onUpdateDownloaded) {
     window.electronAPI.onUpdateDownloaded((info) => {
-      const v = info && info.version ? info.version : '';
+      const v = info && info.version ? String(info.version) : '';
+      const notes = info && info.notes ? String(info.notes) : '';
+
+      // Stocker les informations de changelog pour l'affichage au prochain démarrage
+      try {
+        if (window.localStorage && v) {
+          window.localStorage.setItem('lastUpdateInfo', JSON.stringify({ version: v, notes }));
+        }
+      } catch (_) {}
+
+      state.hasChangelog = true;
+      const container = document.getElementById('aboutChangelog');
+      const btn = document.getElementById('showChangelogBtn');
+      if (container && btn) {
+        btn.textContent = 'Masquer le changelog';
+      }
+
       const msg = v
         ? `Mise à jour ${v} téléchargée. L'application va redémarrer pour l'installer...`
-        : `Une mise à jour a été téléchargée. L'application va redémarrer pour l'installer...`;
+        : 'Une mise à jour a été téléchargée. L\'application va redémarrer pour l\'installer...';
       notify(msg, 'success');
     });
   }

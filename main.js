@@ -788,16 +788,22 @@ ipcMain.handle('check-for-updates', async () => {
     return { ok: false, message: 'Mises à jour automatiques indisponibles en mode développement.' };
   }
 
+  const currentVersion = app.getVersion();
+
   try {
     const result = await autoUpdater.checkForUpdates();
     if (!result) {
-      return { ok: true, message: 'Aucune mise à jour trouvée.' };
+      return { ok: true, message: `Vous utilisez déjà la dernière version (${currentVersion}).` };
     }
     const { updateInfo } = result;
-    if (!updateInfo || !updateInfo.version) {
-      return { ok: true, message: 'Aucune mise à jour disponible.' };
+    if (!updateInfo || !updateInfo.version || updateInfo.version === currentVersion) {
+      return { ok: true, message: `Vous utilisez déjà la dernière version (${currentVersion}).` };
     }
-    return { ok: true, message: `Version ${updateInfo.version} disponible. Le téléchargement démarre...` };
+
+    return {
+      ok: true,
+      message: `Version ${updateInfo.version} disponible. Le téléchargement démarre...`,
+    };
   } catch (err) {
     console.error('[autoUpdater] check-for-updates (manuel) a échoué:', err);
     return { ok: false, message: 'Erreur lors de la recherche de mises à jour.' };
@@ -838,11 +844,22 @@ app.whenReady().then(() => {
 
   autoUpdater.on('update-downloaded', (info) => {
     console.log('[autoUpdater] Mise à jour téléchargée', info.version);
+    let notes = '';
+    if (typeof info.releaseNotes === 'string') {
+      notes = info.releaseNotes;
+    } else if (Array.isArray(info.releaseNotes)) {
+      notes = info.releaseNotes.map(entry => entry && entry.note ? String(entry.note) : '').join('\n\n');
+    }
+
     if (mainWindow && mainWindow.webContents) {
       try {
-        mainWindow.webContents.send('update-downloaded', { version: info.version });
+        mainWindow.webContents.send('update-downloaded', {
+          version: info.version,
+          notes,
+        });
       } catch (_) {}
     }
+
     // Applique la mise à jour au prochain redémarrage après un court délai
     setTimeout(() => {
       autoUpdater.quitAndInstall(false, true);
