@@ -177,6 +177,16 @@ async function init() {
     notify('Mode local — configurez REMOTE_SIGNALING_URL pour accès public', 'info');
   }
 
+  if (window.electronAPI?.getAppVersion) {
+    try {
+      const version = await window.electronAPI.getAppVersion();
+      const aboutEl = document.getElementById('aboutVersion');
+      if (aboutEl && version) {
+        aboutEl.textContent = `v${version} • Electron + WebRTC`;
+      }
+    } catch (_) {}
+  }
+
   generateRoomCode();
 
   // Mettre à jour les infos de présence une fois l'IP locale connue

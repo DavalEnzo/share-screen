@@ -759,6 +759,14 @@ ipcMain.handle('get-turn-credentials', async () => {
   }
 });
 
+ipcMain.handle('get-app-version', () => {
+  try {
+    return app.getVersion();
+  } catch {
+    return '';
+  }
+});
+
 ipcMain.on('window-minimize', () => mainWindow.minimize());
 ipcMain.on('window-maximize', () => {
   if (mainWindow.isMaximized()) mainWindow.unmaximize();
