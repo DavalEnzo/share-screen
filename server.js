@@ -129,22 +129,9 @@ function notifyContactsOfStatus(username) {
     mode: payload.mode,
   });
 
-  const hostContactsRes = authStore.getContacts(username);
-  const hostContacts = hostContactsRes.ok && Array.isArray(hostContactsRes.contacts)
-    ? hostContactsRes.contacts
-    : [];
-
-  const allUsers = authStore.getAllUsernames();
-  for (const watcherName of allUsers) {
-    const res = authStore.getContacts(watcherName);
-    if (!res.ok) continue;
-    if (!res.contacts || !res.contacts.includes(username)) continue;
-
-    // Statut visible uniquement si la relation est mutuelle
-    if (!hostContacts.includes(watcherName)) continue;
-
-    const sessions = userSessions.get(watcherName);
-    if (!sessions) continue;
+  // Diffuser à toutes les sessions connectées ;
+  // le client ne met à jour que les contacts déjà connus.
+  for (const sessions of userSessions.values()) {
     sessions.forEach((client) => {
       if (client.readyState === 1) {
         try { client.send(envelope); } catch (_) {}

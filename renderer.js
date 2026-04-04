@@ -447,15 +447,13 @@ function upsertContactFromStatus(payload) {
   if (!info) return;
 
   const existing = state.contacts.find(c => c.name === info.name);
-  if (existing) {
-    existing.online = info.online;
-    existing.sharing = info.sharing;
-    existing.roomCode = info.roomCode;
-    existing.host = info.host;
-    existing.mode = info.mode;
-  } else {
-    state.contacts.push(info);
-  }
+  if (!existing) return;
+
+  existing.online = info.online;
+  existing.sharing = info.sharing;
+  existing.roomCode = info.roomCode;
+  existing.host = info.host;
+  existing.mode = info.mode;
 }
 
 function renderContactsList() {
