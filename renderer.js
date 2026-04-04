@@ -48,6 +48,7 @@ const state = {
   receiverJoinCode: '',
   receiverJoinHost: 'localhost',
   hasChangelog: false,
+  appVersion: '',
 };
 
 // ─── ICE config (STUN public + TURN dynamique) ──────────────────────────────
@@ -189,6 +190,7 @@ async function init() {
       }
     } catch (_) {}
   }
+  state.appVersion = appVersion;
 
   generateRoomCode();
 
@@ -1709,17 +1711,53 @@ function setupUiBindings() {
     el.addEventListener('click', () => selectPreset(el));
   });
 
-  document.getElementById('showChangelogBtn')?.addEventListener('click', () => {
+  document.getElementById('showChangelogBtn')?.addEventListener('click', async () => {
     const container = document.getElementById('aboutChangelog');
     const btn = document.getElementById('showChangelogBtn');
     if (!container) return;
 
+    // Si on n'a pas encore de changelog, tenter de le récupérer depuis GitHub
     if (!state.hasChangelog || !container.textContent.trim()) {
-      notify('Aucun changelog disponible pour cette version.', 'info');
-      return;
+      if (!window.electronAPI?.getReleaseNotes || !state.appVersion) {
+        notify('Aucun changelog disponible pour cette version.', 'info');
+        return;
+      }
+
+      try {
+        const res = await window.electronAPI.getReleaseNotes(state.appVersion);
+        if (!res || !res.ok || !res.notes) {
+          notify(res && res.message ? res.message : 'Aucun changelog disponible pour cette version.', 'info');
+          return;
+        }
+
+        const maxLen = 2000;
+        const text = String(res.notes).slice(0, maxLen);
+        container.innerHTML = '';
+
+        const title = document.createElement('div');
+        title.style.fontFamily = 'var(--mono)';
+        title.style.fontSize = '12px';
+        title.style.fontWeight = '700';
+        title.style.marginBottom = '6px';
+        title.textContent = `Nouveautés de la version v${res.version || state.appVersion}`;
+
+        const body = document.createElement('pre');
+        body.style.whiteSpace = 'pre-wrap';
+        body.style.fontFamily = 'var(--mono)';
+        body.style.fontSize = '11px';
+        body.style.color = 'var(--text-dim)';
+        body.textContent = text;
+
+        container.appendChild(title);
+        container.appendChild(body);
+        state.hasChangelog = true;
+      } catch (_) {
+        notify('Erreur lors de la récupération du changelog.', 'error');
+        return;
+      }
     }
 
-    const isVisible = container.style.display !== 'none' && container.style.display !== '' ? true : false;
+    const isVisible = container.style.display !== 'none';
     if (isVisible) {
       container.style.display = 'none';
       if (btn) btn.textContent = 'Voir le changelog';

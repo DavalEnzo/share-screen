@@ -767,6 +767,46 @@ ipcMain.handle('get-app-version', () => {
   }
 });
 
+ipcMain.handle('get-release-notes', async (_event, versionOverride) => {
+  const version = (versionOverride || app.getVersion() || '').toString();
+  if (!version) {
+    return { ok: false, message: 'Version inconnue.' };
+  }
+
+  const owner = 'DavalEnzo';
+  const repo = 'share-screen';
+  const tag = `v${version}`;
+  const url = `https://api.github.com/repos/${owner}/${repo}/releases/tags/${encodeURIComponent(tag)}`;
+
+  try {
+    const res = await fetch(url, {
+      headers: {
+        'Accept': 'application/vnd.github+json',
+        'User-Agent': 'ScreenSharePro-Updater',
+      },
+    });
+
+    if (!res.ok) {
+      console.error('[release-notes] HTTP', res.status, 'pour', url);
+      if (res.status === 404) {
+        return { ok: false, message: `Aucun changelog trouvé pour la version ${version}.` };
+      }
+      return { ok: false, message: 'Impossible de récupérer le changelog depuis GitHub.' };
+    }
+
+    const data = await res.json();
+    const notes = (data && typeof data.body === 'string') ? data.body : '';
+    if (!notes.trim()) {
+      return { ok: false, message: `Aucun changelog trouvé pour la version ${version}.` };
+    }
+
+    return { ok: true, version, notes };
+  } catch (err) {
+    console.error('[release-notes] Erreur:', err);
+    return { ok: false, message: 'Erreur lors de la récupération du changelog.' };
+  }
+});
+
 ipcMain.on('window-minimize', () => mainWindow.minimize());
 ipcMain.on('window-maximize', () => {
   if (mainWindow.isMaximized()) mainWindow.unmaximize();
