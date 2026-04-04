@@ -439,6 +439,48 @@ function startSignalingServer() {
           break;
         }
 
+        case 'friend-request-notify': {
+          if (!username) {
+            ws.send(JSON.stringify({ type: 'auth-error', message: 'Non authentifié.' }));
+            break;
+          }
+          const targetName = (msg.to || msg.target || msg.contact || msg.username || '').toString().trim().toLowerCase();
+          if (!targetName) break;
+
+          broadcastToUserSessions(targetName, (client) => {
+            client.send(JSON.stringify({ type: 'friend-request-incoming', from: username }));
+          });
+          break;
+        }
+
+        case 'friend-accept-notify': {
+          if (!username) {
+            ws.send(JSON.stringify({ type: 'auth-error', message: 'Non authentifié.' }));
+            break;
+          }
+          const other = (msg.target || msg.to || msg.username || msg.contact || '').toString().trim().toLowerCase();
+          if (!other) break;
+
+          broadcastToUserSessions(other, (client) => {
+            client.send(JSON.stringify({ type: 'friend-request-accepted', from: username }));
+          });
+          break;
+        }
+
+        case 'friend-reject-notify': {
+          if (!username) {
+            ws.send(JSON.stringify({ type: 'auth-error', message: 'Non authentifié.' }));
+            break;
+          }
+          const other = (msg.target || msg.to || msg.username || msg.contact || '').toString().trim().toLowerCase();
+          if (!other) break;
+
+          broadcastToUserSessions(other, (client) => {
+            client.send(JSON.stringify({ type: 'friend-request-rejected', from: username }));
+          });
+          break;
+        }
+
         case 'friend-accept': {
           if (!username) {
             ws.send(JSON.stringify({ type: 'auth-error', message: 'Non authentifié.' }));

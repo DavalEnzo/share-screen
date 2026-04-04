@@ -28,6 +28,8 @@ const state = {
   signalingReconnectAttempts: 0,
   signalingReconnectTimer: null,
   // Auth & contacts
+  userApiBase: '',
+  authToken: null,
   authWs: null,
   authShouldReconnect: false,
   authReconnectAttempts: 0,
@@ -51,6 +53,12 @@ const state = {
   appVersion: '',
   lastChangelog: null,
 };
+
+function getUserApiBase() {
+  if (state.userApiBase) return state.userApiBase;
+  // Valeur par défaut : backend distant exposé sur le port 8000
+  return 'http://82.67.57.216:8000';
+}
 
 function renderChangelogIntoAbout(version, notes) {
   const aboutChangelog = document.getElementById('aboutChangelog');
@@ -203,6 +211,10 @@ async function init() {
   const runtimeConfig = window.electronAPI.getRuntimeConfig ? window.electronAPI.getRuntimeConfig() : {};
   if (runtimeConfig.remoteSignalingUrl) {
     remoteSignalingUrl = runtimeConfig.remoteSignalingUrl.trim();
+  }
+
+  if (runtimeConfig.userApiBase) {
+    state.userApiBase = String(runtimeConfig.userApiBase).trim();
   }
 
   if (runtimeConfig.turnHost && runtimeConfig.turnPort) {
@@ -372,6 +384,48 @@ function setAuthStatus(text, type) {
   } else {
     el.style.color = 'var(--text-dim)';
   }
+}
+
+async function apiRequest(path, options = {}) {
+  const base = getUserApiBase();
+  const url = `${base}${path}`;
+  const {
+    method = 'GET',
+    body = null,
+    form = false,
+  } = options;
+
+  const headers = {};
+  if (state.authToken) {
+    headers['Authorization'] = `Bearer ${state.authToken}`;
+  }
+  let payload;
+  if (body) {
+    if (form) {
+      const params = new URLSearchParams();
+      Object.entries(body).forEach(([k, v]) => {
+        if (v !== undefined && v !== null) params.append(k, String(v));
+      });
+      headers['Content-Type'] = 'application/x-www-form-urlencoded;charset=UTF-8';
+      payload = params.toString();
+    } else {
+      headers['Content-Type'] = 'application/json';
+      payload = JSON.stringify(body);
+    }
+  }
+
+  const res = await fetch(url, { method, headers, body: payload });
+  let data = null;
+  try {
+    data = await res.json();
+  } catch (_) {
+    // ignore
+  }
+  if (!res.ok) {
+    const message = (data && (data.detail || data.message || data.error)) || `Erreur API (${res.status})`;
+    throw new Error(message);
+  }
+  return data;
 }
 
 function canonicalContact(payload) {
@@ -579,6 +633,29 @@ function renderFriendRequests() {
   }
 }
 
+async function refreshUserProfileFromApi() {
+  if (!state.authToken) return;
+  try {
+    const me = await apiRequest('/api/auth/me');
+    const contactNames = Array.isArray(me.contacts) ? me.contacts : [];
+    state.contacts = contactNames.map((name) => ({
+      name,
+      online: false,
+      sharing: false,
+      roomCode: null,
+      host: null,
+      mode: 'local',
+    }));
+    state.friendIncoming = Array.isArray(me.incoming_requests) ? me.incoming_requests : [];
+    state.friendOutgoing = Array.isArray(me.outgoing_requests) ? me.outgoing_requests : [];
+    renderContactsList();
+    renderFriendRequests();
+  } catch (err) {
+    console.error('Erreur chargement profil API:', err);
+    notify('Erreur lors du chargement du profil utilisateur.', 'error');
+  }
+}
+
 function sendPresenceInfo() {
   if (!state.currentUser || !state.authWs || state.authWs.readyState !== WebSocket.OPEN) return;
   const msg = {
@@ -604,6 +681,11 @@ function openAuthWebSocket() {
 
   ws.onopen = () => {
     state.authReconnectAttempts = 0;
+    if (state.currentUser && state.currentUser.username) {
+      try {
+        ws.send(JSON.stringify({ type: 'attach-user', username: state.currentUser.username }));
+      } catch (_) {}
+    }
     if (state.authPendingMessage) {
       try {
         ws.send(JSON.stringify(state.authPendingMessage));
@@ -623,110 +705,41 @@ function openAuthWebSocket() {
       return;
     }
 
-    if (msg.type === 'auth-ok') {
-      state.currentUser = { username: msg.username };
-      state.contacts = Array.isArray(msg.contacts)
-        ? msg.contacts.map(canonicalContact).filter(Boolean)
-        : [];
-      state.friendIncoming = Array.isArray(msg.incomingRequests) ? msg.incomingRequests : [];
-      state.friendOutgoing = Array.isArray(msg.outgoingRequests) ? msg.outgoingRequests : [];
-      setAuthStatus(`Connecté en tant que ${msg.username}`, 'success');
-      renderContactsList();
-      renderFriendRequests();
-      sendPresenceInfo();
-      return;
-    }
-
-    if (msg.type === 'auth-error') {
-      setAuthStatus(msg.message || 'Erreur d\'authentification.', 'error');
-      notify(msg.message || 'Erreur d\'authentification.', 'error');
-      return;
-    }
-
-    if (msg.type === 'auth-logged-out') {
-      state.currentUser = null;
-      state.contacts = [];
-      state.friendIncoming = [];
-      state.friendOutgoing = [];
-      setAuthStatus('Non connecté.', 'info');
-      renderContactsList();
-      renderFriendRequests();
-      return;
-    }
-
-    if (msg.type === 'contacts-list') {
-      state.contacts = Array.isArray(msg.contacts)
-        ? msg.contacts.map(canonicalContact).filter(Boolean)
-        : [];
-      renderContactsList();
-      return;
-    }
-
-    if (msg.type === 'contacts-error') {
-      notify(msg.message || 'Erreur contacts.', 'error');
-      return;
-    }
-
     if (msg.type === 'contact-status') {
       upsertContactFromStatus(msg);
       renderContactsList();
       return;
     }
 
-    if (msg.type === 'friend-requests') {
-      state.friendIncoming = Array.isArray(msg.incoming) ? msg.incoming : [];
-      state.friendOutgoing = Array.isArray(msg.outgoing) ? msg.outgoing : [];
-      renderFriendRequests();
-      return;
-    }
-
     if (msg.type === 'friend-request-incoming') {
-      const from = (msg.from || '').toString();
+      const from = (msg.from || '').toString().trim().toLowerCase();
       if (from && !state.friendIncoming.includes(from)) {
-        state.friendIncoming.push(from);
-      }
-      renderFriendRequests();
-      notify(`${from} vous a envoyé une demande d'ami.`, 'info');
-      return;
-    }
-
-    if (msg.type === 'friend-request-sent') {
-      const to = (msg.to || '').toString();
-      if (to && !state.friendOutgoing.includes(to)) {
-        state.friendOutgoing.push(to);
-      }
-      renderFriendRequests();
-      if (msg.autoAccepted) {
-        notify(`Demande d'ami avec ${to} acceptée automatiquement.`, 'success');
-      } else {
-        notify(`Demande d'ami envoyée à ${to}.`, 'success');
+        state.friendIncoming = [...state.friendIncoming, from];
+        renderFriendRequests();
+        notify(`Nouvelle demande d'ami de ${from}.`, 'info');
       }
       return;
     }
 
     if (msg.type === 'friend-request-accepted') {
-      const other = (msg.from || '').toString();
-      if (other) {
-        state.friendIncoming = state.friendIncoming.filter(u => u !== other);
-        state.friendOutgoing = state.friendOutgoing.filter(u => u !== other);
+      const from = (msg.from || '').toString().trim().toLowerCase();
+      if (from) {
+        state.friendIncoming = state.friendIncoming.filter((u) => u !== from);
+        state.friendOutgoing = state.friendOutgoing.filter((u) => u !== from);
         renderFriendRequests();
-        notify(`${other} est maintenant dans vos contacts.`, 'success');
+        notify(`${from} a accepté votre demande.`, 'success');
+        refreshUserProfileFromApi();
       }
       return;
     }
 
     if (msg.type === 'friend-request-rejected') {
-      const other = (msg.from || '').toString();
-      if (other) {
-        state.friendOutgoing = state.friendOutgoing.filter(u => u !== other);
+      const from = (msg.from || '').toString().trim().toLowerCase();
+      if (from) {
+        state.friendOutgoing = state.friendOutgoing.filter((u) => u !== from);
         renderFriendRequests();
-        notify(`${other} a refusé votre demande d'ami.`, 'info');
+        notify(`${from} a refusé votre demande.`, 'info');
       }
-      return;
-    }
-
-    if (msg.type === 'friend-error') {
-      notify(msg.message || 'Erreur demande d\'amis.', 'error');
       return;
     }
   };
@@ -757,21 +770,7 @@ function openAuthWebSocket() {
   };
 }
 
-function ensureAuthConnectionAndSend(payload) {
-  state.authPendingMessage = payload;
-  if (state.authWs && state.authWs.readyState === WebSocket.OPEN) {
-    try {
-      state.authWs.send(JSON.stringify(payload));
-      state.authPendingMessage = null;
-      return;
-    } catch (_) {
-      // On tente une reconnexion ci-dessous
-    }
-  }
-  openAuthWebSocket();
-}
-
-function handleAuthLogin() {
+async function handleAuthLogin() {
   const userInput = document.getElementById('authUsernameInput');
   const passInput = document.getElementById('authPasswordInput');
   if (!userInput || !passInput) return;
@@ -784,11 +783,27 @@ function handleAuthLogin() {
     return;
   }
 
-  setAuthStatus('Connexion en cours...', 'info');
-  ensureAuthConnectionAndSend({ type: 'login', username, password });
+  try {
+    setAuthStatus('Connexion en cours...', 'info');
+    const data = await apiRequest('/api/auth/login', {
+      method: 'POST',
+      form: true,
+      body: { username, password },
+    });
+    state.authToken = data.access_token;
+    state.currentUser = { username: username.trim().toLowerCase() };
+    setAuthStatus(`Connecté en tant que ${state.currentUser.username}`, 'success');
+    await refreshUserProfileFromApi();
+    openAuthWebSocket();
+    sendPresenceInfo();
+  } catch (err) {
+    const msg = err && err.message ? err.message : 'Erreur d\'authentification.';
+    setAuthStatus(msg, 'error');
+    notify(msg, 'error');
+  }
 }
 
-function handleAuthRegister() {
+async function handleAuthRegister() {
   const userInput = document.getElementById('authUsernameInput');
   const passInput = document.getElementById('authPasswordInput');
   if (!userInput || !passInput) return;
@@ -801,8 +816,19 @@ function handleAuthRegister() {
     return;
   }
 
-  setAuthStatus('Création du compte...', 'info');
-  ensureAuthConnectionAndSend({ type: 'register', username, password });
+  try {
+    setAuthStatus('Création du compte...', 'info');
+    await apiRequest('/api/auth/register', {
+      method: 'POST',
+      body: { username, password },
+    });
+    // Enchaîner avec une connexion automatique
+    await handleAuthLogin();
+  } catch (err) {
+    const msg = err && err.message ? err.message : 'Erreur lors de la création du compte.';
+    setAuthStatus(msg, 'error');
+    notify(msg, 'error');
+  }
 }
 
 function handleAddContact() {
@@ -817,8 +843,99 @@ function handleAddContact() {
     notify('Entrez un nom d\'utilisateur à ajouter.', 'error');
     return;
   }
-  ensureAuthConnectionAndSend({ type: 'friend-request', target: name });
+  sendFriendRequestViaApi(name);
   input.value = '';
+}
+
+async function sendFriendRequestViaApi(name) {
+  if (!state.authToken) {
+    notify('Connectez-vous avant d\'ajouter des contacts.', 'error');
+    return;
+  }
+  try {
+    const res = await apiRequest('/api/contacts/requests', {
+      method: 'POST',
+      body: { target_username: name },
+    });
+    state.friendIncoming = Array.isArray(res.incoming) ? res.incoming : [];
+    state.friendOutgoing = Array.isArray(res.outgoing) ? res.outgoing : [];
+    renderFriendRequests();
+    notify(`Demande d'ami envoyée à ${name}.`, 'success');
+    await refreshUserProfileFromApi();
+    if (state.authWs && state.authWs.readyState === WebSocket.OPEN && state.currentUser && state.currentUser.username) {
+      try {
+        state.authWs.send(JSON.stringify({ type: 'friend-request-notify', to: name }));
+      } catch (_) {}
+    }
+  } catch (err) {
+    const msg = err && err.message ? err.message : 'Erreur lors de l\'envoi de la demande.';
+    notify(msg, 'error');
+  }
+}
+
+async function acceptFriendRequestViaApi(name) {
+  if (!state.authToken) return;
+  try {
+    const res = await apiRequest(`/api/contacts/requests/${encodeURIComponent(name)}/accept`, {
+      method: 'POST',
+    });
+    state.friendIncoming = Array.isArray(res.incoming) ? res.incoming : [];
+    state.friendOutgoing = Array.isArray(res.outgoing) ? res.outgoing : [];
+    renderFriendRequests();
+    notify(`${name} est maintenant dans vos contacts.`, 'success');
+    await refreshUserProfileFromApi();
+    if (state.authWs && state.authWs.readyState === WebSocket.OPEN && state.currentUser && state.currentUser.username) {
+      try {
+        state.authWs.send(JSON.stringify({ type: 'friend-accept-notify', target: name }));
+      } catch (_) {}
+    }
+  } catch (err) {
+    const msg = err && err.message ? err.message : 'Erreur lors de l\'acceptation de la demande.';
+    notify(msg, 'error');
+  }
+}
+
+async function rejectFriendRequestViaApi(name) {
+  if (!state.authToken) return;
+  try {
+    const res = await apiRequest(`/api/contacts/requests/${encodeURIComponent(name)}/reject`, {
+      method: 'POST',
+    });
+    state.friendIncoming = Array.isArray(res.incoming) ? res.incoming : [];
+    state.friendOutgoing = Array.isArray(res.outgoing) ? res.outgoing : [];
+    renderFriendRequests();
+    if (state.authWs && state.authWs.readyState === WebSocket.OPEN && state.currentUser && state.currentUser.username) {
+      try {
+        state.authWs.send(JSON.stringify({ type: 'friend-reject-notify', target: name }));
+      } catch (_) {}
+    }
+  } catch (err) {
+    const msg = err && err.message ? err.message : 'Erreur lors du refus de la demande.';
+    notify(msg, 'error');
+  }
+}
+
+async function removeContactViaApi(name) {
+  if (!state.authToken) return;
+  try {
+    const res = await apiRequest(`/api/contacts/${encodeURIComponent(name)}`, {
+      method: 'DELETE',
+    });
+    const contacts = Array.isArray(res.contacts) ? res.contacts : [];
+    state.contacts = contacts.map((c) => ({
+      name: c.username,
+      online: false,
+      sharing: false,
+      roomCode: null,
+      host: null,
+      mode: 'local',
+    }));
+    renderContactsList();
+    notify(`${name} a été retiré de vos contacts.`, 'success');
+  } catch (err) {
+    const msg = err && err.message ? err.message : 'Erreur lors de la suppression du contact.';
+    notify(msg, 'error');
+  }
 }
 
 function handleFriendRequestsClick(event) {
@@ -829,9 +946,9 @@ function handleFriendRequestsClick(event) {
   if (!username || !state.currentUser) return;
 
   if (action === 'accept-request') {
-    ensureAuthConnectionAndSend({ type: 'friend-accept', from: username });
+    acceptFriendRequestViaApi(username);
   } else if (action === 'reject-request') {
-    ensureAuthConnectionAndSend({ type: 'friend-reject', from: username });
+    rejectFriendRequestViaApi(username);
   }
 }
 
@@ -844,7 +961,7 @@ function handleContactsListClick(event) {
 
   if (action === 'remove-contact') {
     if (!state.currentUser) return;
-    ensureAuthConnectionAndSend({ type: 'remove-contact', contact: contactName });
+    removeContactViaApi(contactName);
     return;
   }
 

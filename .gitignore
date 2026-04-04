@@ -30,3 +30,5 @@ build/
 
 turnserver.conf
 users.json
+
+fastapi_backend_screenshare

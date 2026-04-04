@@ -3,6 +3,7 @@ const { contextBridge, ipcRenderer } = require('electron');
 const DEFAULT_REMOTE_SIGNALING_URL = 'wss://share-screen-production.up.railway.app';
 const DEFAULT_TURN_HOST = '82.67.57.216';
 const DEFAULT_TURN_PORT = '3478';
+const DEFAULT_USER_API_BASE = 'http://82.67.57.216:8000';
 
 contextBridge.exposeInMainWorld('electronAPI', {
   getSources: () => ipcRenderer.invoke('get-sources'),
@@ -12,6 +13,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     remoteSignalingUrl: process.env.REMOTE_SIGNALING_URL || DEFAULT_REMOTE_SIGNALING_URL,
     turnHost: process.env.TURN_HOST || DEFAULT_TURN_HOST,
     turnPort: process.env.TURN_PORT || DEFAULT_TURN_PORT,
+    userApiBase: process.env.USER_API_BASE || DEFAULT_USER_API_BASE,
     // Credentials statiques désactivés : on utilise les credentials éphémères via TURN_SECRET
     turnUsername: '',
     turnPassword: '',
