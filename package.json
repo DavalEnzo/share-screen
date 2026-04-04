@@ -1,6 +1,6 @@
 {
   "name": "screenshare-app",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "Application de partage d'écran 1080p60",
   "main": "main.js",
   "author": {

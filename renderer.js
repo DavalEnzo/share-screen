@@ -1660,6 +1660,16 @@ function setupUiBindings() {
   document.querySelectorAll('#presetPills .quality-pill').forEach(el => {
     el.addEventListener('click', () => selectPreset(el));
   });
+
+  if (window.electronAPI?.onUpdateDownloaded) {
+    window.electronAPI.onUpdateDownloaded((info) => {
+      const v = info && info.version ? info.version : '';
+      const msg = v
+        ? `Mise à jour ${v} téléchargée. L'application va redémarrer pour l'installer...`
+        : `Une mise à jour a été téléchargée. L'application va redémarrer pour l'installer...`;
+      notify(msg, 'success');
+    });
+  }
 }
 
 // ─── Boot ──────────────────────────────────────────────────────────────────────

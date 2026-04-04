@@ -830,12 +830,19 @@ app.whenReady().then(() => {
 
   autoUpdater.on('update-downloaded', (info) => {
     console.log('[autoUpdater] Mise à jour téléchargée', info.version);
-    // Applique la mise à jour au prochain redémarrage
-    autoUpdater.quitAndInstall(false, true);
+    if (mainWindow && mainWindow.webContents) {
+      try {
+        mainWindow.webContents.send('update-downloaded', { version: info.version });
+      } catch (_) {}
+    }
+    // Applique la mise à jour au prochain redémarrage après un court délai
+    setTimeout(() => {
+      autoUpdater.quitAndInstall(false, true);
+    }, 2000);
   });
 
   // Vérifie immédiatement au démarrage
-  autoUpdater.checkForUpdatesAndNotify().catch((err) => {
-    console.error('[autoUpdater] checkForUpdatesAndNotify a échoué:', err);
+  autoUpdater.checkForUpdates().catch((err) => {
+    console.error('[autoUpdater] checkForUpdates a échoué:', err);
   });
 });
