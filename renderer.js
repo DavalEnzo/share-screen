@@ -104,14 +104,13 @@ function sanitizeHtmlNotes(raw) {
   html = html.replace(/<iframe[\s\S]*?<\/iframe>/gi, '');
   html = html.replace(/<object[\s\S]*?<\/object>/gi, '');
   html = html.replace(/<embed[\s\S]*?<\/embed>/gi, '');
-  // Certains outils/affichages GitHub ajoutent des "..." en fin de ligne
-  // lorsqu'un texte est tronqué visuellement. On les retire en fin de ligne
-  // pour éviter de couper les phrases dans le changelog.
-  html = html.replace(/\.{3}(?=\s*($|\r?\n))/g, '');
-  html = html.replace(/…(?=\s*($|\r?\n))/g, '');
-  // Et si une nouvelle ligne commence par des ellipses ("...changelog"),
-  // on les supprime aussi pour recoller la phrase proprement.
-  html = html.replace(/(^|\r?\n)\s*(?:\.{3}|…)(?=\S)/g, '$1');
+  // Coller les lignes séparées uniquement par des ellipses de troncature GitHub
+  // ex: "gestion des …\nellipses" -> "gestion des ellipses".
+  html = html.replace(/(?:\.{3,}|…)\s*\r?\n\s*/g, ' ');
+  // En pratique, pour éviter tout artefact visuel lié aux ellipses tronquées,
+  // on supprime aussi tous les caractères d'ellipse restants (… ou ...).
+  html = html.replace(/…/g, '');
+  html = html.replace(/\.{3,}/g, '');
   return html;
 }
 
