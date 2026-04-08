@@ -1,4 +1,4 @@
-# 🚀 Guide de déploiement public — ScreenShare Pro
+# 🚀 Guide de déploiement public — Lunia
 
 ## Vue d'ensemble
 
@@ -99,15 +99,15 @@ Dans `renderer.js`, décommenter les blocs TURN :
 
 **3.1 Builder l'app**
 ```bash
-cd screenshare-app
+cd lunia-app
 npm install
 npm run build
 ```
 
 Résultat dans `dist/` :
-- `ScreenShare Pro Setup 1.0.0.exe`  → Windows
-- `ScreenShare Pro-1.0.0.dmg`        → macOS
-- `ScreenShare Pro-1.0.0.AppImage`   → Linux
+- `Lunia Setup 1.0.0.exe`  → Windows
+- `Lunia-1.0.0.dmg`        → macOS
+- `Lunia-1.0.0.AppImage`   → Linux
 
 **3.2 Publier sur GitHub Releases (gratuit)**
 
@@ -115,8 +115,8 @@ Résultat dans `dist/` :
 # Créer un repo GitHub pour l'app
 git init
 git add .
-git commit -m "ScreenShare Pro v1.0.0"
-git remote add origin https://github.com/TON_USER/screenshare-app.git
+git commit -m "Lunia v1.0.0"
+git remote add origin https://github.com/TON_USER/lunia-app.git
 git push -u origin main
 
 # Créer une release
@@ -128,7 +128,7 @@ git push -u origin main
 **3.3 Partager avec ta communauté**
 ```
 Lien de téléchargement :
-https://github.com/TON_USER/screenshare-app/releases/latest
+https://github.com/TON_USER/lunia-app/releases/latest
 ```
 
 ---
@@ -167,7 +167,7 @@ Pour macOS, même chose : clic droit → Ouvrir → Ouvrir quand même.
 
 ```
 screenshare-server/   → Déployé sur Railway (serveur de signalisation)
-screenshare-app/      → Distribué via GitHub Releases (app Electron)
+lunia-app/            → Distribué via GitHub Releases (app Electron)
 ```
 
 C'est tout ! Aucune autre infrastructure nécessaire.

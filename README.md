@@ -1,4 +1,4 @@
-# ScreenShare Pro — Application Electron
+# Lunia — Application Electron
 
 Application de partage d'écran en 1080p60 basée sur Electron + WebRTC.
 
@@ -6,7 +6,7 @@ Application de partage d'écran en 1080p60 basée sur Electron + WebRTC.
 
 ```bash
 # 1. Aller dans le dossier
-cd screenshare-app
+cd lunia-app
 
 # 2. Installer les dépendances
 npm install
@@ -38,7 +38,7 @@ npm run start:unsafe
 ## 📁 Structure des fichiers
 
 ```
-screenshare-app/
+lunia-app/
 ├── main.js          → Processus principal Electron (serveur WebSocket de signalisation)
 ├── preload.js       → Bridge sécurisé entre main et renderer
 ├── index.html       → Interface utilisateur

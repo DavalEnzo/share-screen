@@ -1,5 +1,5 @@
 /**
- * ScreenShare Pro — Serveur de signalisation WebSocket
+ * Lunia — Serveur de signalisation WebSocket
  * Déployable sur Railway, Render, Fly.io (gratuit)
  */
 
@@ -59,7 +59,7 @@ const server = http.createServer((req, res) => {
     return;
   }
   res.writeHead(200, { 'Content-Type': 'text/plain' });
-  res.end('ScreenShare Pro — Signaling Server\n');
+  res.end('Lunia — Signaling Server\n');
 });
 
 // ─── WebSocket ────────────────────────────────────────────────────────────────
