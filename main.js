@@ -471,6 +471,12 @@ function startSignalingServer() {
           });
           // La persistance des contacts est gérée par l'API FastAPI.
           // Ici on force la synchro de présence des deux côtés immédiatement.
+          broadcastToUserSessions(username, (client) => {
+            sendContactsList(username, client);
+          });
+          broadcastToUserSessions(other, (client) => {
+            sendContactsList(other, client);
+          });
           notifyContactsOfStatus(username);
           notifyContactsOfStatus(other);
           break;

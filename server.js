@@ -505,6 +505,12 @@ wss.on('connection', (ws, req) => {
         });
         // En mode API, on pousse aussi la présence des deux utilisateurs
         // pour éviter d'attendre une reconnexion avant de voir le statut.
+        broadcastToUserSessions(username, (client) => {
+          sendContactsList(username, client);
+        });
+        broadcastToUserSessions(other, (client) => {
+          sendContactsList(other, client);
+        });
         notifyContactsOfStatus(username);
         notifyContactsOfStatus(other);
         break;
