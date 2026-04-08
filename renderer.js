@@ -799,6 +799,7 @@ function applyContactsListFromPayload(payload) {
   }).filter(Boolean);
 
   renderContactsList();
+  hydrateContactProfiles();
 }
 
 function getMutualContactState(name) {
@@ -1713,17 +1714,12 @@ async function removeContactViaApi(name) {
     const res = await apiRequest(`/api/contacts/${encodeURIComponent(name)}`, {
       method: 'DELETE',
     });
-    const contacts = Array.isArray(res.contacts) ? res.contacts : [];
-    state.contacts = contacts.map((c) => ({
-      name: c.username,
-      isMutualContact: false,
-      online: false,
-      sharing: false,
-      roomCode: null,
-      host: null,
-      mode: 'local',
-    }));
-    renderContactsList();
+    await refreshUserProfileFromApi();
+    if (state.authWs && state.authWs.readyState === WebSocket.OPEN && state.currentUser && state.currentUser.username) {
+      try {
+        state.authWs.send(JSON.stringify({ type: 'remove-contact-notify', target: name }));
+      } catch (_) {}
+    }
     notify(`${name} a été retiré de vos contacts.`, 'success');
   } catch (err) {
     const msg = err && err.message ? err.message : 'Erreur lors de la suppression du contact.';

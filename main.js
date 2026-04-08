@@ -510,6 +510,22 @@ function startSignalingServer() {
           break;
         }
 
+        case 'remove-contact-notify': {
+          if (!username) {
+            ws.send(JSON.stringify({ type: 'auth-error', message: 'Non authentifié.' }));
+            break;
+          }
+          const other = (msg.target || msg.to || msg.username || msg.contact || '').toString().trim().toLowerCase();
+          if (!other) break;
+
+          broadcastToUserSessions(other, (client) => {
+            sendContactsList(other, client);
+          });
+          notifyContactsOfStatus(username);
+          notifyContactsOfStatus(other);
+          break;
+        }
+
         case 'friend-accept': {
           if (!username) {
             ws.send(JSON.stringify({ type: 'auth-error', message: 'Non authentifié.' }));
