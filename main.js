@@ -134,6 +134,23 @@ function startSignalingServer() {
     };
   }
 
+  function sendPresenceSnapshot(ws) {
+    for (const username of presence.keys()) {
+      const payload = buildStatusPayload(username);
+      try {
+        ws.send(JSON.stringify({
+          type: 'contact-status',
+          contact: username,
+          online: payload.online,
+          sharing: payload.sharing,
+          roomCode: payload.roomCode,
+          host: payload.host,
+          mode: payload.mode,
+        }));
+      } catch (_) {}
+    }
+  }
+
   function notifyContactsOfStatus(username) {
     const payload = buildStatusPayload(username);
     const envelope = JSON.stringify({
@@ -295,6 +312,7 @@ function startSignalingServer() {
             }
           }
           bindUser(finalUser);
+          sendPresenceSnapshot(ws);
           break;
         }
 
