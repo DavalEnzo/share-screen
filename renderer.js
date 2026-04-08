@@ -5,6 +5,9 @@
 const DEFAULT_REMOTE_SIGNALING_URL = '';
 let remoteSignalingUrl = DEFAULT_REMOTE_SIGNALING_URL;
 
+const AUTH_STORAGE_TOKEN_KEY = 'screenshare.authToken';
+const AUTH_STORAGE_USERNAME_KEY = 'screenshare.authUsername';
+
 function useRemoteSignaling() {
   return Boolean(remoteSignalingUrl);
 }
@@ -36,6 +39,8 @@ const state = {
   authReconnectTimer: null,
   authPendingMessage: null,
   currentUser: null,
+  profileAvatarDraft: undefined,
+  contactProfilesByName: {},
   contacts: [],
   friendIncoming: [],
   friendOutgoing: [],
@@ -309,10 +314,20 @@ async function init() {
       }
     } catch (_) {}
   }
+
+  // Mettre à jour l'état initial des boutons d'authentification
+  updateAuthButtonsVisibility();
+
+  // Restaurer automatiquement une session persistée, si disponible
+  await restoreSavedAuthSession();
 }
 
 // ─── Navigation ───────────────────────────────────────────────────────────────
 function showPage(name) {
+  if (name === 'profile' && !(state.currentUser && state.authToken)) {
+    notify('Connectez-vous pour modifier votre profil.', 'error');
+    name = 'contacts';
+  }
   document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
   document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
   document.getElementById(`page-${name}`).classList.add('active');
@@ -386,6 +401,298 @@ function setAuthStatus(text, type) {
   }
 }
 
+function setProfileStatus(text, type = 'info') {
+  const el = document.getElementById('profileStatusLabel');
+  if (!el) return;
+  el.textContent = text;
+  el.style.color = type === 'error' ? 'var(--red)' : type === 'success' ? 'var(--green)' : 'var(--text-dim)';
+}
+
+function formatDateTime(value) {
+  if (!value) return '—';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '—';
+  return new Intl.DateTimeFormat('fr-FR', {
+    dateStyle: 'medium',
+    timeStyle: 'short',
+  }).format(date);
+}
+
+function setAvatarPreview(imgEl, iconEl, avatarData) {
+  if (!imgEl || !iconEl) return;
+  const hasAvatar = Boolean(avatarData);
+  if (hasAvatar) {
+    imgEl.src = avatarData;
+    imgEl.style.display = 'block';
+    iconEl.style.display = 'none';
+  } else {
+    imgEl.removeAttribute('src');
+    imgEl.style.display = 'none';
+    iconEl.style.display = 'block';
+  }
+}
+
+function renderProfileForm(profile) {
+  const usernameEl = document.getElementById('profileUsernameValue');
+  const displayNameEl = document.getElementById('profileDisplayNameInput');
+  const avatarImgEl = document.getElementById('profileAvatarPreviewImg');
+  const avatarIconEl = document.getElementById('profileAvatarPreviewIcon');
+  const createdAtEl = document.getElementById('profileCreatedAt');
+  const updatedAtEl = document.getElementById('profileUpdatedAt');
+  if (!usernameEl || !displayNameEl || !avatarImgEl || !avatarIconEl || !createdAtEl || !updatedAtEl) return;
+
+  if (!profile) {
+    usernameEl.textContent = '—';
+    displayNameEl.value = '';
+    setAvatarPreview(avatarImgEl, avatarIconEl, null);
+    state.profileAvatarDraft = undefined;
+    createdAtEl.textContent = '—';
+    updatedAtEl.textContent = '—';
+    return;
+  }
+
+  usernameEl.textContent = profile.username || '—';
+  displayNameEl.value = profile.display_name || profile.username || '';
+  const avatarData = state.profileAvatarDraft !== undefined
+    ? state.profileAvatarDraft
+    : (profile.avatar_data || null);
+  setAvatarPreview(avatarImgEl, avatarIconEl, avatarData);
+  createdAtEl.textContent = formatDateTime(profile.created_at);
+  updatedAtEl.textContent = formatDateTime(profile.updated_at);
+}
+
+function syncProfileFromCurrentUser() {
+  if (!state.currentUser) {
+    renderProfileForm(null);
+    setProfileStatus('Connectez-vous pour modifier votre profil.', 'info');
+    return;
+  }
+
+  renderProfileForm({
+    username: state.currentUser.username || '',
+    display_name: state.currentUser.displayName || state.currentUser.display_name || state.currentUser.username || '',
+    avatar_data: state.currentUser.avatarData || state.currentUser.avatar_data || null,
+    created_at: state.currentUser.createdAt || state.currentUser.created_at || null,
+    updated_at: state.currentUser.updatedAt || state.currentUser.updated_at || null,
+  });
+}
+
+async function handleProfileSave() {
+  if (!state.authToken || !state.currentUser) {
+    notify('Connectez-vous pour modifier votre profil.', 'error');
+    return;
+  }
+
+  const displayNameEl = document.getElementById('profileDisplayNameInput');
+  const currentPasswordEl = document.getElementById('profileCurrentPasswordInput');
+  const newPasswordEl = document.getElementById('profileNewPasswordInput');
+  const confirmPasswordEl = document.getElementById('profileConfirmPasswordInput');
+
+  if (!displayNameEl || !currentPasswordEl || !newPasswordEl || !confirmPasswordEl) return;
+
+  const displayName = displayNameEl.value.trim();
+  const currentPassword = currentPasswordEl.value;
+  const newPassword = newPasswordEl.value;
+  const confirmPassword = confirmPasswordEl.value;
+
+  const payload = {
+    display_name: displayName,
+  };
+
+  if (state.profileAvatarDraft !== undefined) {
+    payload.avatar_data = state.profileAvatarDraft;
+  }
+
+  const wantsPasswordChange = Boolean(newPassword || currentPassword || confirmPassword);
+  if (wantsPasswordChange) {
+    if (!currentPassword || !newPassword || !confirmPassword) {
+      notify('Pour changer le mot de passe, remplissez les trois champs.', 'error');
+      return;
+    }
+    if (newPassword !== confirmPassword) {
+      notify('Les nouveaux mots de passe ne correspondent pas.', 'error');
+      return;
+    }
+    payload.current_password = currentPassword;
+    payload.new_password = newPassword;
+  }
+
+  try {
+    setProfileStatus('Enregistrement en cours...', 'info');
+    const updated = await apiRequest('/api/auth/me', {
+      method: 'PUT',
+      body: payload,
+    });
+
+    state.currentUser = {
+      ...state.currentUser,
+      username: updated.username,
+      displayName: updated.display_name || updated.username,
+      display_name: updated.display_name || updated.username,
+      avatarData: updated.avatar_data || null,
+      avatar_data: updated.avatar_data || null,
+      createdAt: updated.created_at || state.currentUser.createdAt || null,
+      updatedAt: updated.updated_at || null,
+    };
+
+    state.profileAvatarDraft = undefined;
+
+    renderProfileForm(updated);
+    updateSidebarUserMenu();
+    clearPersistedAuthSession();
+    if (document.getElementById('rememberSessionToggle')?.checked) {
+      persistAuthSession(state.currentUser.username, state.authToken);
+    }
+
+    currentPasswordEl.value = '';
+    newPasswordEl.value = '';
+    confirmPasswordEl.value = '';
+    const avatarInputEl = document.getElementById('profileAvatarInput');
+    if (avatarInputEl) avatarInputEl.value = '';
+
+    setProfileStatus('Profil mis à jour.', 'success');
+    notify('Profil mis à jour.', 'success');
+  } catch (err) {
+    const msg = err && err.message ? err.message : 'Erreur lors de la mise à jour du profil.';
+    setProfileStatus(msg, 'error');
+    notify(msg, 'error');
+  }
+}
+
+function handleProfileReset() {
+  if (!state.currentUser) {
+    renderProfileForm(null);
+    return;
+  }
+
+  state.profileAvatarDraft = undefined;
+  syncProfileFromCurrentUser();
+  const currentPasswordEl = document.getElementById('profileCurrentPasswordInput');
+  const newPasswordEl = document.getElementById('profileNewPasswordInput');
+  const confirmPasswordEl = document.getElementById('profileConfirmPasswordInput');
+  if (currentPasswordEl) currentPasswordEl.value = '';
+  if (newPasswordEl) newPasswordEl.value = '';
+  if (confirmPasswordEl) confirmPasswordEl.value = '';
+  const avatarInputEl = document.getElementById('profileAvatarInput');
+  if (avatarInputEl) avatarInputEl.value = '';
+  setProfileStatus('Formulaire réinitialisé.', 'info');
+}
+
+async function handleProfileAvatarSelected(event) {
+  const file = event.target.files && event.target.files[0];
+  if (!file) return;
+
+  if (!file.type || !file.type.startsWith('image/')) {
+    notify('Sélectionnez une image valide.', 'error');
+    event.target.value = '';
+    return;
+  }
+
+  const maxSize = 2 * 1024 * 1024;
+  if (file.size > maxSize) {
+    notify('Image trop lourde. Choisissez une image de moins de 2 Mo.', 'error');
+    event.target.value = '';
+    return;
+  }
+
+  const dataUrl = await new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ''));
+    reader.onerror = () => reject(new Error('Impossible de lire le fichier.'));
+    reader.readAsDataURL(file);
+  }).catch((error) => {
+    notify(error.message || 'Impossible de lire l’image.', 'error');
+    return '';
+  });
+
+  if (!dataUrl) {
+    event.target.value = '';
+    return;
+  }
+
+  state.profileAvatarDraft = dataUrl;
+  renderProfileForm({
+    username: state.currentUser?.username || '',
+    display_name: state.currentUser?.displayName || state.currentUser?.display_name || state.currentUser?.username || '',
+    avatar_data: state.currentUser?.avatarData || state.currentUser?.avatar_data || null,
+    created_at: state.currentUser?.createdAt || state.currentUser?.created_at || null,
+    updated_at: state.currentUser?.updatedAt || state.currentUser?.updated_at || null,
+  });
+  setProfileStatus('Photo prête à être enregistrée.', 'info');
+}
+
+function clearProfileAvatarDraft() {
+  if (!state.currentUser) return;
+  state.profileAvatarDraft = null;
+  const avatarInputEl = document.getElementById('profileAvatarInput');
+  if (avatarInputEl) avatarInputEl.value = '';
+  renderProfileForm({
+    username: state.currentUser.username || '',
+    display_name: state.currentUser.displayName || state.currentUser.display_name || state.currentUser.username || '',
+    avatar_data: state.currentUser.avatarData || state.currentUser.avatar_data || null,
+    created_at: state.currentUser.createdAt || state.currentUser.created_at || null,
+    updated_at: state.currentUser.updatedAt || state.currentUser.updated_at || null,
+  });
+  setProfileStatus('Photo retirée. Enregistrez pour appliquer le changement.', 'info');
+}
+
+function persistAuthSession(username, token) {
+  if (!window.localStorage || !username || !token) return;
+  try {
+    window.localStorage.setItem(AUTH_STORAGE_USERNAME_KEY, String(username));
+    window.localStorage.setItem(AUTH_STORAGE_TOKEN_KEY, String(token));
+  } catch (_) {}
+}
+
+function clearPersistedAuthSession() {
+  if (!window.localStorage) return;
+  try {
+    window.localStorage.removeItem(AUTH_STORAGE_USERNAME_KEY);
+    window.localStorage.removeItem(AUTH_STORAGE_TOKEN_KEY);
+  } catch (_) {}
+}
+
+async function restoreSavedAuthSession() {
+  if (!window.localStorage) return;
+
+  let savedUsername = '';
+  let savedToken = '';
+
+  try {
+    savedUsername = (window.localStorage.getItem(AUTH_STORAGE_USERNAME_KEY) || '').trim().toLowerCase();
+    savedToken = (window.localStorage.getItem(AUTH_STORAGE_TOKEN_KEY) || '').trim();
+  } catch (_) {
+    return;
+  }
+
+  if (!savedUsername || !savedToken) return;
+
+  state.currentUser = { username: savedUsername };
+  state.authToken = savedToken;
+  setAuthStatus('Restauration de session...', 'info');
+
+  try {
+    await refreshUserProfileFromApi();
+    openAuthWebSocket();
+    sendPresenceInfo();
+
+    const rememberToggle = document.getElementById('rememberSessionToggle');
+    if (rememberToggle) rememberToggle.checked = true;
+
+    updateAuthButtonsVisibility();
+    setAuthStatus(`Connecté en tant que ${savedUsername}`, 'success');
+  } catch (_) {
+    state.currentUser = null;
+    state.authToken = null;
+    state.contacts = [];
+    state.friendIncoming = [];
+    state.friendOutgoing = [];
+    clearPersistedAuthSession();
+    updateAuthButtonsVisibility();
+    setAuthStatus('Session expirée. Connectez-vous de nouveau.', 'error');
+  }
+}
+
 async function apiRequest(path, options = {}) {
   const base = getUserApiBase();
   const url = `${base}${path}`;
@@ -456,6 +763,40 @@ function upsertContactFromStatus(payload) {
   existing.mode = info.mode;
 }
 
+async function hydrateContactProfiles() {
+  if (!state.authToken || !state.currentUser) return;
+
+  try {
+    const res = await apiRequest('/api/contacts/profiles');
+    const profiles = Array.isArray(res?.contacts) ? res.contacts : [];
+    const byName = new Map(
+      profiles
+        .filter((p) => p && p.username)
+        .map((p) => [String(p.username).toLowerCase(), p]),
+    );
+
+    const map = {};
+    byName.forEach((profile, username) => {
+      map[username] = {
+        displayName: profile.display_name || username,
+        avatarData: profile.avatar_data || null,
+      };
+    });
+    state.contactProfilesByName = map;
+
+    state.contacts.forEach((contact) => {
+      const profile = byName.get(String(contact.name || '').toLowerCase());
+      if (!profile) return;
+      contact.displayName = profile.display_name || contact.name;
+      contact.avatarData = profile.avatar_data || null;
+    });
+
+    renderContactsList();
+  } catch (_) {
+    // Non bloquant: la liste de contacts reste utilisable même sans avatars.
+  }
+}
+
 function renderContactsList() {
   const listEl = document.getElementById('contactsList');
   if (!listEl) return;
@@ -481,6 +822,19 @@ function renderContactsList() {
     const main = document.createElement('div');
     main.className = 'contact-main';
 
+    const avatar = document.createElement('div');
+    avatar.className = 'contact-avatar';
+    if (contact.avatarData) {
+      const avatarImg = document.createElement('img');
+      avatarImg.src = contact.avatarData;
+      avatarImg.alt = `Avatar de ${contact.name}`;
+      avatar.appendChild(avatarImg);
+    } else {
+      const avatarIcon = document.createElement('i');
+      avatarIcon.className = 'fa-solid fa-user';
+      avatar.appendChild(avatarIcon);
+    }
+
     const dot = document.createElement('div');
     dot.className = 'contact-status-dot';
     if (contact.sharing) dot.classList.add('sharing');
@@ -488,7 +842,7 @@ function renderContactsList() {
 
     const nameSpan = document.createElement('div');
     nameSpan.className = 'contact-name';
-    nameSpan.textContent = contact.name;
+    nameSpan.textContent = contact.displayName || contact.name;
 
     const statusSpan = document.createElement('div');
     statusSpan.className = 'contact-status-text';
@@ -502,6 +856,7 @@ function renderContactsList() {
       statusSpan.textContent = 'Hors ligne';
     }
 
+    main.appendChild(avatar);
     main.appendChild(dot);
     main.appendChild(nameSpan);
     main.appendChild(statusSpan);
@@ -555,6 +910,14 @@ function renderFriendRequests() {
   const incoming = [...(state.friendIncoming || [])].sort((a, b) => a.localeCompare(b));
   const outgoing = [...(state.friendOutgoing || [])].sort((a, b) => a.localeCompare(b));
 
+  const getProfileMeta = (username) => {
+    const key = String(username || '').toLowerCase();
+    return state.contactProfilesByName[key] || {
+      displayName: username,
+      avatarData: null,
+    };
+  };
+
   if (incoming.length === 0) {
     incomingEl.innerHTML = '<div class="contact-list-empty">Aucune demande reçue.</div>';
   } else {
@@ -565,14 +928,30 @@ function renderFriendRequests() {
       const main = document.createElement('div');
       main.className = 'contact-main';
 
+      const meta = getProfileMeta(name);
+
+      const avatar = document.createElement('div');
+      avatar.className = 'contact-avatar';
+      if (meta.avatarData) {
+        const avatarImg = document.createElement('img');
+        avatarImg.src = meta.avatarData;
+        avatarImg.alt = `Avatar de ${name}`;
+        avatar.appendChild(avatarImg);
+      } else {
+        const avatarIcon = document.createElement('i');
+        avatarIcon.className = 'fa-solid fa-user';
+        avatar.appendChild(avatarIcon);
+      }
+
       const nameSpan = document.createElement('div');
       nameSpan.className = 'contact-name';
-      nameSpan.textContent = name;
+      nameSpan.textContent = meta.displayName || name;
 
       const statusSpan = document.createElement('div');
       statusSpan.className = 'contact-status-text';
       statusSpan.textContent = 'Demande reçue';
 
+      main.appendChild(avatar);
       main.appendChild(nameSpan);
       main.appendChild(statusSpan);
 
@@ -614,18 +993,47 @@ function renderFriendRequests() {
       const main = document.createElement('div');
       main.className = 'contact-main';
 
+      const meta = getProfileMeta(name);
+
+      const avatar = document.createElement('div');
+      avatar.className = 'contact-avatar';
+      if (meta.avatarData) {
+        const avatarImg = document.createElement('img');
+        avatarImg.src = meta.avatarData;
+        avatarImg.alt = `Avatar de ${name}`;
+        avatar.appendChild(avatarImg);
+      } else {
+        const avatarIcon = document.createElement('i');
+        avatarIcon.className = 'fa-solid fa-user';
+        avatar.appendChild(avatarIcon);
+      }
+
       const nameSpan = document.createElement('div');
       nameSpan.className = 'contact-name';
-      nameSpan.textContent = name;
+      nameSpan.textContent = meta.displayName || name;
 
       const statusSpan = document.createElement('div');
       statusSpan.className = 'contact-status-text';
       statusSpan.textContent = 'En attente...';
 
+      main.appendChild(avatar);
       main.appendChild(nameSpan);
       main.appendChild(statusSpan);
 
+      const actions = document.createElement('div');
+      actions.className = 'contact-actions';
+
+      const cancelBtn = document.createElement('button');
+      cancelBtn.className = 'btn btn-ghost';
+      cancelBtn.style.padding = '4px 8px';
+      cancelBtn.style.fontSize = '11px';
+      cancelBtn.dataset.action = 'cancel-outgoing-request';
+      cancelBtn.dataset.username = name;
+      cancelBtn.textContent = 'Annuler';
+      actions.appendChild(cancelBtn);
+
       row.appendChild(main);
+      row.appendChild(actions);
       outgoingEl.appendChild(row);
     });
   }
@@ -636,18 +1044,39 @@ async function refreshUserProfileFromApi() {
   try {
     const me = await apiRequest('/api/auth/me');
     const contactNames = Array.isArray(me.contacts) ? me.contacts : [];
-    state.contacts = contactNames.map((name) => ({
-      name,
-      online: false,
-      sharing: false,
-      roomCode: null,
-      host: null,
-      mode: 'local',
-    }));
+    const prevByName = new Map(state.contacts.map((c) => [c.name, c]));
+    state.contacts = contactNames.map((name) => {
+      const existing = prevByName.get(name);
+      if (existing) return existing;
+      return {
+        name,
+        displayName: name,
+        avatarData: null,
+        online: false,
+        sharing: false,
+        roomCode: null,
+        host: null,
+        mode: 'local',
+      };
+    });
     state.friendIncoming = Array.isArray(me.incoming_requests) ? me.incoming_requests : [];
     state.friendOutgoing = Array.isArray(me.outgoing_requests) ? me.outgoing_requests : [];
+    state.currentUser = {
+      ...state.currentUser,
+      username: me.username,
+      displayName: me.display_name || me.username,
+      display_name: me.display_name || me.username,
+      bio: me.bio || '',
+      avatarData: me.avatar_data || null,
+      avatar_data: me.avatar_data || null,
+      createdAt: me.created_at || state.currentUser?.createdAt || null,
+      updatedAt: me.updated_at || null,
+    };
     renderContactsList();
     renderFriendRequests();
+    await hydrateContactProfiles();
+    syncProfileFromCurrentUser();
+    updateSidebarUserMenu();
   } catch (err) {
     console.error('Erreur chargement profil API:', err);
     notify('Erreur lors du chargement du profil utilisateur.', 'error');
@@ -768,10 +1197,132 @@ function openAuthWebSocket() {
   };
 }
 
+function updateAuthButtonsVisibility() {
+  const loginBtn = document.getElementById('authLoginBtn');
+  const registerBtn = document.getElementById('authRegisterBtn');
+  const logoutBtn = document.getElementById('authLogoutBtn');
+  const accountCard = document.getElementById('accountCard');
+  const contactsCard = document.getElementById('contactsCard');
+  const contactsGrid = document.getElementById('contactsGrid');
+  const contactsLogoutRow = document.getElementById('contactsLogoutRow');
+  const navProfile = document.getElementById('nav-profile');
+  if (!loginBtn || !registerBtn || !logoutBtn) return;
+
+  const isAuthenticated = Boolean(state.currentUser && state.authToken);
+
+  if (isAuthenticated) {
+    loginBtn.style.display = 'none';
+    registerBtn.style.display = 'none';
+    logoutBtn.style.display = '';
+    if (accountCard) accountCard.style.display = 'none';
+    if (contactsCard) contactsCard.style.display = '';
+    if (contactsGrid) {
+      // Une seule carte visible en mode connecté: forcer pleine largeur.
+      contactsGrid.style.display = 'block';
+      contactsGrid.style.gridTemplateColumns = '';
+    }
+    if (contactsLogoutRow) contactsLogoutRow.style.display = '';
+    if (navProfile) navProfile.style.display = '';
+  } else {
+    loginBtn.style.display = 'flex';
+    registerBtn.style.display = 'flex';
+    logoutBtn.style.display = 'none';
+    if (accountCard) accountCard.style.display = '';
+    if (contactsCard) contactsCard.style.display = 'none';
+    if (contactsGrid) {
+      contactsGrid.style.display = 'block';
+      contactsGrid.style.gridTemplateColumns = '';
+    }
+    if (contactsLogoutRow) contactsLogoutRow.style.display = 'none';
+    if (navProfile) navProfile.style.display = 'none';
+  }
+
+  updateSidebarUserMenu();
+}
+
+function closeSidebarUserMenu() {
+  const menu = document.getElementById('sidebarUserMenu');
+  if (menu) menu.classList.remove('open');
+}
+
+function updateSidebarUserMenu() {
+  const wrap = document.getElementById('sidebarUserWrap');
+  const nameEl = document.getElementById('sidebarUserName');
+  const subEl = document.getElementById('sidebarUserSub');
+  const avatarImgEl = document.getElementById('sidebarUserAvatarImg');
+  const avatarIconEl = document.getElementById('sidebarUserAvatarIcon');
+  if (!wrap || !nameEl || !subEl || !avatarImgEl || !avatarIconEl) return;
+
+  const isAuthenticated = Boolean(state.currentUser && state.authToken);
+  if (isAuthenticated) {
+    wrap.style.display = '';
+    const displayName = state.currentUser.displayName || state.currentUser.display_name || state.currentUser.username || 'Utilisateur';
+    nameEl.textContent = displayName;
+    if (subEl) subEl.textContent = `@${state.currentUser.username || ''}`;
+    setAvatarPreview(
+      avatarImgEl,
+      avatarIconEl,
+      state.currentUser.avatarData || state.currentUser.avatar_data || null,
+    );
+  } else {
+    wrap.style.display = 'none';
+    closeSidebarUserMenu();
+  }
+}
+
+async function handleAuthLogout() {
+  if (!state.currentUser || !state.authToken) {
+    notify('Aucun utilisateur connecté.', 'error');
+    return;
+  }
+
+  const name = state.currentUser.username || '';
+
+  state.authShouldReconnect = false;
+  if (state.authReconnectTimer) {
+    clearTimeout(state.authReconnectTimer);
+    state.authReconnectTimer = null;
+  }
+  if (state.authWs) {
+    try { state.authWs.close(); } catch (_) {}
+    state.authWs = null;
+  }
+
+  state.authToken = null;
+  state.currentUser = null;
+  state.contacts = [];
+  state.contactProfilesByName = {};
+  state.friendIncoming = [];
+  state.friendOutgoing = [];
+  state.profileAvatarDraft = undefined;
+  clearPersistedAuthSession();
+  renderContactsList();
+  renderFriendRequests();
+  renderProfileForm(null);
+
+  setAuthStatus('Non connecté.', 'info');
+  setProfileStatus('Connectez-vous pour modifier votre profil.', 'info');
+  updateAuthButtonsVisibility();
+
+  if (name) {
+    notify(`Déconnecté de ${name}.`, 'info');
+  }
+}
+
 async function handleAuthLogin() {
   const userInput = document.getElementById('authUsernameInput');
   const passInput = document.getElementById('authPasswordInput');
   if (!userInput || !passInput) return;
+
+  if (state.currentUser && state.authToken) {
+    const name = state.currentUser.username || '';
+    const msg = name
+      ? `Déjà connecté en tant que ${name}. Déconnectez-vous avant de changer de compte.`
+      : 'Vous êtes déjà connecté. Déconnectez-vous avant de changer de compte.';
+    setAuthStatus(msg, 'error');
+    notify(msg, 'error');
+    return;
+  }
 
   const username = userInput.value.trim();
   const password = passInput.value;
@@ -790,10 +1341,19 @@ async function handleAuthLogin() {
     });
     state.authToken = data.access_token;
     state.currentUser = { username: username.trim().toLowerCase() };
+
+    const rememberToggle = document.getElementById('rememberSessionToggle');
+    if (rememberToggle && rememberToggle.checked) {
+      persistAuthSession(state.currentUser.username, state.authToken);
+    } else {
+      clearPersistedAuthSession();
+    }
+
     setAuthStatus(`Connecté en tant que ${state.currentUser.username}`, 'success');
     await refreshUserProfileFromApi();
     openAuthWebSocket();
     sendPresenceInfo();
+    updateAuthButtonsVisibility();
   } catch (err) {
     const msg = err && err.message ? err.message : 'Erreur d\'authentification.';
     setAuthStatus(msg, 'error');
@@ -805,6 +1365,16 @@ async function handleAuthRegister() {
   const userInput = document.getElementById('authUsernameInput');
   const passInput = document.getElementById('authPasswordInput');
   if (!userInput || !passInput) return;
+
+  if (state.currentUser && state.authToken) {
+    const name = state.currentUser.username || '';
+    const msg = name
+      ? `Vous êtes déjà connecté en tant que ${name}. Déconnectez-vous pour créer un nouveau compte ou changer d'utilisateur.`
+      : 'Vous êtes déjà connecté. Déconnectez-vous pour créer un nouveau compte ou changer d’utilisateur.';
+    setAuthStatus(msg, 'error');
+    notify(msg, 'error');
+    return;
+  }
 
   const username = userInput.value.trim();
   const password = passInput.value;
@@ -913,6 +1483,23 @@ async function rejectFriendRequestViaApi(name) {
   }
 }
 
+async function cancelOutgoingFriendRequestViaApi(name) {
+  if (!state.authToken) return;
+  try {
+    const res = await apiRequest(`/api/contacts/requests/${encodeURIComponent(name)}/cancel`, {
+      method: 'POST',
+    });
+    state.friendIncoming = Array.isArray(res.incoming) ? res.incoming : [];
+    state.friendOutgoing = Array.isArray(res.outgoing) ? res.outgoing : [];
+    renderFriendRequests();
+    notify(`Demande annulée pour ${name}.`, 'info');
+    await refreshUserProfileFromApi();
+  } catch (err) {
+    const msg = err && err.message ? err.message : 'Erreur lors de l\'annulation de la demande.';
+    notify(msg, 'error');
+  }
+}
+
 async function removeContactViaApi(name) {
   if (!state.authToken) return;
   try {
@@ -947,6 +1534,8 @@ function handleFriendRequestsClick(event) {
     acceptFriendRequestViaApi(username);
   } else if (action === 'reject-request') {
     rejectFriendRequestViaApi(username);
+  } else if (action === 'cancel-outgoing-request') {
+    cancelOutgoingFriendRequestViaApi(username);
   }
 }
 
@@ -1841,6 +2430,7 @@ function setupUiBindings() {
   document.getElementById('nav-share')?.addEventListener('click', () => showPage('share'));
   document.getElementById('nav-receive')?.addEventListener('click', () => showPage('receive'));
   document.getElementById('nav-contacts')?.addEventListener('click', () => showPage('contacts'));
+  document.getElementById('nav-profile')?.addEventListener('click', () => showPage('profile'));
   document.getElementById('nav-settings')?.addEventListener('click', () => showPage('settings'));
   document.getElementById('nav-info')?.addEventListener('click', () => showPage('info'));
 
@@ -1854,6 +2444,28 @@ function setupUiBindings() {
 
   document.getElementById('authLoginBtn')?.addEventListener('click', handleAuthLogin);
   document.getElementById('authRegisterBtn')?.addEventListener('click', handleAuthRegister);
+  document.getElementById('authLogoutBtn')?.addEventListener('click', handleAuthLogout);
+  document.getElementById('sidebarLogoutBtn')?.addEventListener('click', async () => {
+    closeSidebarUserMenu();
+    await handleAuthLogout();
+  });
+  document.getElementById('sidebarProfileSettingsBtn')?.addEventListener('click', () => {
+    closeSidebarUserMenu();
+    showPage('profile');
+  });
+  document.getElementById('sidebarUserBtn')?.addEventListener('click', (event) => {
+    event.stopPropagation();
+    const menu = document.getElementById('sidebarUserMenu');
+    if (!menu) return;
+    menu.classList.toggle('open');
+  });
+  document.addEventListener('click', (event) => {
+    const wrap = document.getElementById('sidebarUserWrap');
+    if (!wrap) return;
+    if (!wrap.contains(event.target)) {
+      closeSidebarUserMenu();
+    }
+  });
   document.getElementById('addContactBtn')?.addEventListener('click', handleAddContact);
   document.getElementById('contactsList')?.addEventListener('click', handleContactsListClick);
   document.getElementById('incomingRequestsList')?.addEventListener('click', handleFriendRequestsClick);
@@ -1875,6 +2487,14 @@ function setupUiBindings() {
       notify('Erreur lors de la recherche de mises à jour.', 'error');
     }
   });
+
+  document.getElementById('profileSaveBtn')?.addEventListener('click', handleProfileSave);
+  document.getElementById('profileResetBtn')?.addEventListener('click', handleProfileReset);
+  document.getElementById('profileAvatarBtn')?.addEventListener('click', () => {
+    document.getElementById('profileAvatarInput')?.click();
+  });
+  document.getElementById('profileAvatarClearBtn')?.addEventListener('click', clearProfileAvatarDraft);
+  document.getElementById('profileAvatarInput')?.addEventListener('change', handleProfileAvatarSelected);
 
   document.getElementById('joinCodeInput')?.addEventListener('input', (event) => {
     event.target.value = event.target.value.toUpperCase();

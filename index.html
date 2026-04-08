@@ -127,6 +127,118 @@
       gap: 4px;
     }
 
+    .sidebar-user-wrap {
+      position: relative;
+      margin-bottom: 8px;
+    }
+
+    .sidebar-user-btn {
+      width: 100%;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 10px 12px;
+      border-radius: 10px;
+      border: 1px solid var(--border);
+      background: var(--surface2);
+      color: var(--text);
+      cursor: pointer;
+      text-align: left;
+      transition: all 0.15s;
+    }
+
+    .sidebar-user-btn:hover {
+      border-color: rgba(0,229,255,0.35);
+    }
+
+    .sidebar-user-avatar {
+      width: 28px;
+      height: 28px;
+      border-radius: 8px;
+      background: rgba(0,229,255,0.12);
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      color: var(--accent);
+      flex-shrink: 0;
+      overflow: hidden;
+      position: relative;
+    }
+
+    .sidebar-user-avatar img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      display: none;
+    }
+
+    .sidebar-user-text {
+      min-width: 0;
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      gap: 1px;
+    }
+
+    .sidebar-user-name {
+      font-size: 12px;
+      font-weight: 700;
+      color: var(--text);
+      font-family: var(--mono);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .sidebar-user-sub {
+      font-size: 10px;
+      color: var(--text-dim);
+      font-family: var(--mono);
+    }
+
+    .sidebar-user-menu {
+      position: absolute;
+      top: calc(100% + 6px);
+      left: 0;
+      right: 0;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 6px;
+      display: none;
+      z-index: 20;
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+    }
+
+    .sidebar-user-menu.open {
+      display: block;
+    }
+
+    .sidebar-user-menu-item {
+      width: 100%;
+      border: 0;
+      background: transparent;
+      color: var(--text-dim);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      border-radius: 8px;
+      padding: 8px 10px;
+      font-size: 12px;
+      font-family: var(--mono);
+      cursor: pointer;
+      text-align: left;
+    }
+
+    .sidebar-user-menu-item:hover {
+      background: var(--surface2);
+      color: var(--text);
+    }
+
+    .sidebar-user-menu-item.logout {
+      color: var(--red);
+    }
+
     .nav-label {
       font-size: 10px;
       font-family: var(--mono);
@@ -341,6 +453,54 @@
 
     .input:focus { border-color: var(--accent); }
     .input::placeholder { color: var(--text-dim); }
+
+    .readonly-field {
+      background: var(--surface);
+      border-color: var(--border);
+      color: var(--text-dim);
+      cursor: not-allowed;
+      user-select: none;
+      position: relative;
+    }
+
+    .profile-avatar-row {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+    }
+
+    .profile-avatar-preview {
+      width: 72px;
+      height: 72px;
+      border-radius: 18px;
+      border: 1px solid var(--border);
+      background: var(--surface2);
+      overflow: hidden;
+      flex-shrink: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: var(--text-dim);
+    }
+
+    .profile-avatar-preview img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      display: none;
+    }
+
+    .profile-avatar-actions {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .profile-avatar-note {
+      font-size: 10px;
+      font-family: var(--mono);
+      color: var(--text-dim);
+    }
 
     /* Room code */
     .room-code-box {
@@ -597,6 +757,29 @@
       gap: 8px;
     }
 
+    .contact-avatar {
+      width: 34px;
+      height: 34px;
+      border-radius: 10px;
+      border: 1px solid var(--border);
+      background: var(--surface2);
+      overflow: hidden;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      color: var(--text-dim);
+      flex-shrink: 0;
+      position: relative;
+      font-size: 14px;
+    }
+
+    .contact-avatar img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      display: block;
+    }
+
     .contact-name {
       font-family: var(--mono);
       font-weight: 600;
@@ -846,6 +1029,28 @@
     <!-- Sidebar -->
     <div class="sidebar">
       <div class="sidebar-nav">
+        <div class="sidebar-user-wrap" id="sidebarUserWrap" style="display:none">
+          <button class="sidebar-user-btn" id="sidebarUserBtn" type="button">
+            <span class="sidebar-user-avatar">
+              <img id="sidebarUserAvatarImg" alt="Photo de profil">
+              <i class="fa-solid fa-user" id="sidebarUserAvatarIcon"></i>
+            </span>
+            <span class="sidebar-user-text">
+              <span class="sidebar-user-name" id="sidebarUserName">—</span>
+              <span class="sidebar-user-sub" id="sidebarUserSub">Connecté</span>
+            </span>
+            <span style="color:var(--text-dim); font-size:11px"><i class="fa-solid fa-chevron-down"></i></span>
+          </button>
+          <div class="sidebar-user-menu" id="sidebarUserMenu">
+            <button class="sidebar-user-menu-item" id="sidebarProfileSettingsBtn" type="button">
+              <i class="fa-solid fa-id-card"></i> Paramètres du profil
+            </button>
+            <button class="sidebar-user-menu-item logout" id="sidebarLogoutBtn" type="button">
+              <i class="fa-solid fa-right-from-bracket"></i> Se déconnecter
+            </button>
+          </div>
+        </div>
+
         <div class="nav-label">Navigation</div>
         <div class="nav-item active" id="nav-share">
           <span class="nav-icon"><i class="fa-solid fa-up-right-from-square"></i></span> Partager
@@ -857,6 +1062,9 @@
         <div class="nav-label">Outils</div>
         <div class="nav-item" id="nav-contacts">
           <span class="nav-icon"><i class="fa-solid fa-users"></i></span> Contacts
+        </div>
+        <div class="nav-item" id="nav-profile">
+          <span class="nav-icon"><i class="fa-solid fa-id-card"></i></span> Profil
         </div>
         <div class="nav-item" id="nav-settings">
           <span class="nav-icon"><i class="fa-solid fa-gear"></i></span> Paramètres
@@ -1116,8 +1324,8 @@
           </div>
         </div>
 
-        <div class="grid-2">
-          <div class="card">
+        <div class="grid-2" id="contactsGrid">
+          <div class="card" id="accountCard">
             <div class="card-header">
               <div class="card-icon cyan"><i class="fa-solid fa-user"></i></div>
               <div class="card-title">Compte</div>
@@ -1131,6 +1339,13 @@
                 <label>Mot de passe</label>
                 <input class="input" id="authPasswordInput" type="password" placeholder="••••">
               </div>
+              <div class="toggle-row" style="padding:0">
+                <div class="toggle-info">
+                  <div class="toggle-name">Rester connecté</div>
+                  <div class="toggle-desc">Conserver la session après fermeture de l'application</div>
+                </div>
+                <label class="toggle"><input type="checkbox" id="rememberSessionToggle"><span class="toggle-slider"></span></label>
+              </div>
               <div style="display:flex; gap:8px">
                 <button class="btn btn-primary" id="authLoginBtn" style="flex:1">Se connecter</button>
                 <button class="btn btn-ghost" id="authRegisterBtn" style="flex:1">Créer un compte</button>
@@ -1141,7 +1356,7 @@
             </div>
           </div>
 
-          <div class="card">
+          <div class="card" id="contactsCard" style="display:none">
             <div class="card-header">
               <div class="card-icon purple"><i class="fa-solid fa-users"></i></div>
               <div class="card-title">Mes contacts</div>
@@ -1170,6 +1385,93 @@
                   <div class="contact-list-empty">Connectez-vous pour voir vos demandes.</div>
                 </div>
               </div>
+            </div>
+          </div>
+        </div>
+
+        <div id="contactsLogoutRow" style="display:none; margin-top:12px">
+          <button class="btn btn-ghost" id="authLogoutBtn" style="width:100%; border:1px solid var(--red); color: var(--red);">Se déconnecter</button>
+        </div>
+      </div>
+
+      <!-- PAGE: Profil -->
+      <div class="page" id="page-profile">
+        <div class="page-header">
+          <div>
+            <div class="page-title">Pro<span>fil</span></div>
+            <div class="page-sub">Modifiez vos informations personnelles et votre mot de passe</div>
+          </div>
+        </div>
+
+        <div class="card" style="max-width:900px">
+          <div class="card-header">
+            <div class="card-icon cyan"><i class="fa-solid fa-user-gear"></i></div>
+            <div class="card-title">Informations du compte</div>
+          </div>
+
+          <div style="display:flex; flex-direction:column; gap:14px">
+            <div class="profile-avatar-row">
+              <div class="profile-avatar-preview">
+                <img id="profileAvatarPreviewImg" alt="Aperçu photo de profil">
+                <i class="fa-solid fa-user" id="profileAvatarPreviewIcon"></i>
+              </div>
+              <div class="profile-avatar-actions">
+                <div class="field" style="margin:0">
+                  <label>Photo de profil</label>
+                  <input type="file" id="profileAvatarInput" accept="image/*" style="display:none">
+                  <div style="display:flex; gap:8px; flex-wrap:wrap">
+                    <button class="btn btn-ghost" id="profileAvatarBtn" type="button">Choisir une image</button>
+                    <button class="btn btn-ghost" id="profileAvatarClearBtn" type="button">Retirer</button>
+                  </div>
+                </div>
+                <div class="profile-avatar-note">PNG, JPG ou WEBP. L'image est enregistrée avec le profil.</div>
+              </div>
+            </div>
+
+            <div class="grid-2" style="gap:14px">
+              <div class="field">
+                <label>Nom d'utilisateur</label>
+                <div class="input readonly-field" id="profileUsernameValue" style="display:flex; align-items:center; min-height:42px;">—</div>
+              </div>
+              <div class="field">
+                <label>Nom affiché</label>
+                <input class="input" id="profileDisplayNameInput" placeholder="Votre nom affiché">
+              </div>
+            </div>
+
+            <div class="divider"></div>
+
+            <div class="card-header" style="margin-bottom:0">
+              <div class="card-icon pink"><i class="fa-solid fa-key"></i></div>
+              <div class="card-title">Changer le mot de passe</div>
+            </div>
+
+            <div class="grid-2" style="gap:14px">
+              <div class="field">
+                <label>Mot de passe actuel</label>
+                <input class="input" id="profileCurrentPasswordInput" type="password" placeholder="••••">
+              </div>
+              <div class="field">
+                <label>Nouveau mot de passe</label>
+                <input class="input" id="profileNewPasswordInput" type="password" placeholder="••••">
+              </div>
+            </div>
+
+            <div class="field">
+              <label>Confirmer le nouveau mot de passe</label>
+              <input class="input" id="profileConfirmPasswordInput" type="password" placeholder="••••">
+            </div>
+
+            <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:center">
+              <button class="btn btn-primary" id="profileSaveBtn">Enregistrer les modifications</button>
+              <button class="btn btn-ghost" id="profileResetBtn">Réinitialiser le formulaire</button>
+            </div>
+
+            <div class="divider"></div>
+
+            <div style="display:grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap:10px">
+              <div class="info-row"><span class="info-key">Créé le</span><span class="info-val" id="profileCreatedAt">—</span></div>
+              <div class="info-row"><span class="info-key">Mis à jour le</span><span class="info-val" id="profileUpdatedAt">—</span></div>
             </div>
           </div>
         </div>
