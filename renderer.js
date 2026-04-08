@@ -42,6 +42,7 @@ const state = {
   profileAvatarDraft: undefined,
   contactProfilesByName: {},
   contactProfilesHydrating: false,
+  contactProfilesHydrateQueued: false,
   lastContactProfilesHydrateAt: 0,
   pendingContactStatusByName: {},
   contacts: [],
@@ -869,9 +870,13 @@ function upsertContactFromStatus(payload) {
 
 async function hydrateContactProfiles() {
   if (!state.authToken || !state.currentUser) return;
-  if (state.contactProfilesHydrating) return;
+  if (state.contactProfilesHydrating) {
+    state.contactProfilesHydrateQueued = true;
+    return;
+  }
 
   state.contactProfilesHydrating = true;
+  state.contactProfilesHydrateQueued = false;
 
   try {
     const res = await apiRequest('/api/contacts/profiles');
@@ -928,6 +933,10 @@ async function hydrateContactProfiles() {
   } finally {
     state.contactProfilesHydrating = false;
     state.lastContactProfilesHydrateAt = Date.now();
+    if (state.contactProfilesHydrateQueued) {
+      state.contactProfilesHydrateQueued = false;
+      hydrateContactProfiles();
+    }
   }
 }
 
@@ -1369,6 +1378,15 @@ function openAuthWebSocket() {
       }
       return;
     }
+
+    if (msg.type === 'contact-removed') {
+      const from = (msg.from || '').toString().trim().toLowerCase();
+      if (from) {
+        refreshUserProfileFromApi();
+        notify(`${from} a supprimé le contact.`, 'info');
+      }
+      return;
+    }
   };
 
   ws.onerror = () => {
@@ -1493,6 +1511,7 @@ async function handleAuthLogout() {
   state.contacts = [];
   state.contactProfilesByName = {};
   state.contactProfilesHydrating = false;
+  state.contactProfilesHydrateQueued = false;
   state.lastContactProfilesHydrateAt = 0;
   state.pendingContactStatusByName = {};
   state.friendIncoming = [];

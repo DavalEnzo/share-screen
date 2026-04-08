@@ -519,7 +519,7 @@ function startSignalingServer() {
           if (!other) break;
 
           broadcastToUserSessions(other, (client) => {
-            sendContactsList(other, client);
+            client.send(JSON.stringify({ type: 'contact-removed', from: username }));
           });
           notifyContactsOfStatus(username);
           notifyContactsOfStatus(other);
