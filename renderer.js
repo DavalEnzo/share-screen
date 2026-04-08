@@ -43,6 +43,7 @@ const state = {
   contactProfilesByName: {},
   contactProfilesHydrating: false,
   lastContactProfilesHydrateAt: 0,
+  pendingContactStatusByName: {},
   contacts: [],
   friendIncoming: [],
   friendOutgoing: [],
@@ -739,7 +740,7 @@ async function apiRequest(path, options = {}) {
 
 function canonicalContact(payload) {
   if (!payload) return null;
-  const name = (payload.user || payload.name || payload.contact || payload.username || '').toString();
+  const name = (payload.user || payload.name || payload.contact || payload.username || '').toString().trim().toLowerCase();
   if (!name) return null;
   return {
     name,
@@ -751,12 +752,46 @@ function canonicalContact(payload) {
   };
 }
 
+function isMutualContactName(name) {
+  const key = String(name || '').toLowerCase();
+  if (!key) return false;
+  const profile = state.contactProfilesByName[key];
+  if (profile && typeof profile.isMutualContact === 'boolean') {
+    return profile.isMutualContact;
+  }
+  const contact = state.contacts.find((c) => String(c.name || '').toLowerCase() === key);
+  return Boolean(contact && contact.isMutualContact);
+}
+
 function upsertContactFromStatus(payload) {
   const info = canonicalContact({ ...payload, user: payload.contact || payload.user || payload.name });
   if (!info) return;
 
+  if (!isMutualContactName(info.name)) {
+    const existingNonMutual = state.contacts.find(
+      c => String(c.name || '').toLowerCase() === info.name,
+    );
+    if (existingNonMutual) {
+      existingNonMutual.online = false;
+      existingNonMutual.sharing = false;
+      existingNonMutual.roomCode = null;
+      existingNonMutual.host = null;
+      existingNonMutual.mode = 'local';
+    }
+    return;
+  }
+
   const existing = state.contacts.find(c => c.name === info.name);
-  if (!existing) return;
+  if (!existing) {
+    state.pendingContactStatusByName[info.name] = {
+      online: info.online,
+      sharing: info.sharing,
+      roomCode: info.roomCode,
+      host: info.host,
+      mode: info.mode,
+    };
+    return;
+  }
 
   existing.online = info.online;
   existing.sharing = info.sharing;
@@ -785,6 +820,7 @@ async function hydrateContactProfiles() {
       map[username] = {
         displayName: profile.display_name || username,
         avatarData: profile.avatar_data || null,
+        isMutualContact: Boolean(profile.is_mutual_contact),
       };
     });
     state.contactProfilesByName = map;
@@ -794,6 +830,25 @@ async function hydrateContactProfiles() {
       if (!profile) return;
       contact.displayName = profile.display_name || contact.name;
       contact.avatarData = profile.avatar_data || null;
+      contact.isMutualContact = Boolean(profile.is_mutual_contact);
+
+      if (!contact.isMutualContact) {
+        contact.online = false;
+        contact.sharing = false;
+        contact.roomCode = null;
+        contact.host = null;
+        contact.mode = 'local';
+        return;
+      }
+
+      const pendingStatus = state.pendingContactStatusByName[contact.name];
+      if (pendingStatus) {
+        contact.online = Boolean(pendingStatus.online);
+        contact.sharing = Boolean(pendingStatus.sharing);
+        contact.roomCode = pendingStatus.roomCode || null;
+        contact.host = pendingStatus.host || null;
+        contact.mode = pendingStatus.mode === 'remote' ? 'remote' : 'local';
+      }
     });
 
     renderContactsList();
@@ -866,8 +921,11 @@ function renderContactsList() {
 
     const dot = document.createElement('div');
     dot.className = 'contact-status-dot';
-    if (contact.sharing) dot.classList.add('sharing');
-    else if (contact.online) dot.classList.add('online');
+    const canSeeStatus = Boolean(contact.isMutualContact);
+    const visibleSharing = canSeeStatus && Boolean(contact.sharing);
+    const visibleOnline = canSeeStatus && Boolean(contact.online);
+    if (visibleSharing) dot.classList.add('sharing');
+    else if (visibleOnline) dot.classList.add('online');
 
     const nameSpan = document.createElement('div');
     nameSpan.className = 'contact-name';
@@ -875,11 +933,13 @@ function renderContactsList() {
 
     const statusSpan = document.createElement('div');
     statusSpan.className = 'contact-status-text';
-    if (contact.sharing && contact.mode === 'remote') {
+    if (!canSeeStatus) {
+      statusSpan.textContent = 'Hors ligne';
+    } else if (visibleSharing && contact.mode === 'remote') {
       statusSpan.textContent = 'En partage (distant)';
-    } else if (contact.sharing) {
+    } else if (visibleSharing) {
       statusSpan.textContent = 'En partage (LAN)';
-    } else if (contact.online) {
+    } else if (visibleOnline) {
       statusSpan.textContent = 'En ligne';
     } else {
       statusSpan.textContent = 'Hors ligne';
@@ -893,7 +953,7 @@ function renderContactsList() {
     const actions = document.createElement('div');
     actions.className = 'contact-actions';
 
-    if (contact.sharing && contact.roomCode) {
+    if (visibleSharing && contact.roomCode) {
       const joinBtn = document.createElement('button');
       joinBtn.className = 'btn btn-primary';
       joinBtn.style.padding = '4px 10px';
@@ -1078,17 +1138,39 @@ async function refreshUserProfileFromApi() {
     const prevByName = new Map(state.contacts.map((c) => [c.name, c]));
     state.contacts = contactNames.map((name) => {
       const existing = prevByName.get(name);
-      if (existing) return existing;
-      return {
+      const contact = existing || {
         name,
         displayName: name,
         avatarData: null,
+        isMutualContact: false,
         online: false,
         sharing: false,
         roomCode: null,
         host: null,
         mode: 'local',
       };
+
+      const profileMeta = state.contactProfilesByName[String(name || '').toLowerCase()];
+      if (profileMeta && typeof profileMeta.isMutualContact === 'boolean') {
+        contact.isMutualContact = profileMeta.isMutualContact;
+      }
+
+      const pendingStatus = state.pendingContactStatusByName[name];
+      if (pendingStatus && contact.isMutualContact) {
+        contact.online = Boolean(pendingStatus.online);
+        contact.sharing = Boolean(pendingStatus.sharing);
+        contact.roomCode = pendingStatus.roomCode || null;
+        contact.host = pendingStatus.host || null;
+        contact.mode = pendingStatus.mode === 'remote' ? 'remote' : 'local';
+      } else if (!contact.isMutualContact) {
+        contact.online = false;
+        contact.sharing = false;
+        contact.roomCode = null;
+        contact.host = null;
+        contact.mode = 'local';
+      }
+
+      return contact;
     });
     state.friendIncoming = Array.isArray(me.incoming_requests) ? me.incoming_requests : [];
     state.friendOutgoing = Array.isArray(me.outgoing_requests) ? me.outgoing_requests : [];
@@ -1336,6 +1418,7 @@ async function handleAuthLogout() {
   state.contactProfilesByName = {};
   state.contactProfilesHydrating = false;
   state.lastContactProfilesHydrateAt = 0;
+  state.pendingContactStatusByName = {};
   state.friendIncoming = [];
   state.friendOutgoing = [];
   state.profileAvatarDraft = undefined;
@@ -1558,6 +1641,7 @@ async function removeContactViaApi(name) {
     const contacts = Array.isArray(res.contacts) ? res.contacts : [];
     state.contacts = contacts.map((c) => ({
       name: c.username,
+      isMutualContact: false,
       online: false,
       sharing: false,
       roomCode: null,
