@@ -41,6 +41,8 @@ const state = {
   currentUser: null,
   profileAvatarDraft: undefined,
   contactProfilesByName: {},
+  contactProfilesHydrating: false,
+  lastContactProfilesHydrateAt: 0,
   contacts: [],
   friendIncoming: [],
   friendOutgoing: [],
@@ -765,6 +767,9 @@ function upsertContactFromStatus(payload) {
 
 async function hydrateContactProfiles() {
   if (!state.authToken || !state.currentUser) return;
+  if (state.contactProfilesHydrating) return;
+
+  state.contactProfilesHydrating = true;
 
   try {
     const res = await apiRequest('/api/contacts/profiles');
@@ -792,9 +797,33 @@ async function hydrateContactProfiles() {
     });
 
     renderContactsList();
+    renderFriendRequests();
   } catch (_) {
     // Non bloquant: la liste de contacts reste utilisable même sans avatars.
+  } finally {
+    state.contactProfilesHydrating = false;
+    state.lastContactProfilesHydrateAt = Date.now();
   }
+}
+
+function ensureRequestProfilesHydrated(incoming, outgoing) {
+  if (!state.authToken || !state.currentUser) return;
+
+  const missing = [];
+  const seen = new Set();
+  for (const username of [...incoming, ...outgoing]) {
+    const key = String(username || '').toLowerCase();
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    if (!state.contactProfilesByName[key]) {
+      missing.push(key);
+    }
+  }
+
+  if (missing.length === 0) return;
+  const now = Date.now();
+  if (now - state.lastContactProfilesHydrateAt < 1500) return;
+  hydrateContactProfiles();
 }
 
 function renderContactsList() {
@@ -909,6 +938,8 @@ function renderFriendRequests() {
 
   const incoming = [...(state.friendIncoming || [])].sort((a, b) => a.localeCompare(b));
   const outgoing = [...(state.friendOutgoing || [])].sort((a, b) => a.localeCompare(b));
+
+  ensureRequestProfilesHydrated(incoming, outgoing);
 
   const getProfileMeta = (username) => {
     const key = String(username || '').toLowerCase();
@@ -1143,6 +1174,7 @@ function openAuthWebSocket() {
       if (from && !state.friendIncoming.includes(from)) {
         state.friendIncoming = [...state.friendIncoming, from];
         renderFriendRequests();
+        hydrateContactProfiles();
         notify(`Nouvelle demande d'ami de ${from}.`, 'info');
       }
       return;
@@ -1166,6 +1198,16 @@ function openAuthWebSocket() {
         state.friendOutgoing = state.friendOutgoing.filter((u) => u !== from);
         renderFriendRequests();
         notify(`${from} a refusé votre demande.`, 'info');
+      }
+      return;
+    }
+
+    if (msg.type === 'friend-request-cancelled') {
+      const from = (msg.from || '').toString().trim().toLowerCase();
+      if (from) {
+        state.friendIncoming = state.friendIncoming.filter((u) => u !== from);
+        renderFriendRequests();
+        notify(`${from} a annulé sa demande.`, 'info');
       }
       return;
     }
@@ -1292,6 +1334,8 @@ async function handleAuthLogout() {
   state.currentUser = null;
   state.contacts = [];
   state.contactProfilesByName = {};
+  state.contactProfilesHydrating = false;
+  state.lastContactProfilesHydrateAt = 0;
   state.friendIncoming = [];
   state.friendOutgoing = [];
   state.profileAvatarDraft = undefined;
@@ -1492,6 +1536,11 @@ async function cancelOutgoingFriendRequestViaApi(name) {
     state.friendIncoming = Array.isArray(res.incoming) ? res.incoming : [];
     state.friendOutgoing = Array.isArray(res.outgoing) ? res.outgoing : [];
     renderFriendRequests();
+    if (state.authWs && state.authWs.readyState === WebSocket.OPEN && state.currentUser && state.currentUser.username) {
+      try {
+        state.authWs.send(JSON.stringify({ type: 'friend-cancel-notify', target: name }));
+      } catch (_) {}
+    }
     notify(`Demande annulée pour ${name}.`, 'info');
     await refreshUserProfileFromApi();
   } catch (err) {

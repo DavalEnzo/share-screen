@@ -469,6 +469,10 @@ function startSignalingServer() {
           broadcastToUserSessions(other, (client) => {
             client.send(JSON.stringify({ type: 'friend-request-accepted', from: username }));
           });
+          // La persistance des contacts est gérée par l'API FastAPI.
+          // Ici on force la synchro de présence des deux côtés immédiatement.
+          notifyContactsOfStatus(username);
+          notifyContactsOfStatus(other);
           break;
         }
 
@@ -482,6 +486,20 @@ function startSignalingServer() {
 
           broadcastToUserSessions(other, (client) => {
             client.send(JSON.stringify({ type: 'friend-request-rejected', from: username }));
+          });
+          break;
+        }
+
+        case 'friend-cancel-notify': {
+          if (!username) {
+            ws.send(JSON.stringify({ type: 'auth-error', message: 'Non authentifié.' }));
+            break;
+          }
+          const other = (msg.target || msg.to || msg.username || msg.contact || '').toString().trim().toLowerCase();
+          if (!other) break;
+
+          broadcastToUserSessions(other, (client) => {
+            client.send(JSON.stringify({ type: 'friend-request-cancelled', from: username }));
           });
           break;
         }

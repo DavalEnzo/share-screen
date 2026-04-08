@@ -503,6 +503,10 @@ wss.on('connection', (ws, req) => {
         broadcastToUserSessions(other, (client) => {
           client.send(JSON.stringify({ type: 'friend-request-accepted', from: username }));
         });
+        // En mode API, on pousse aussi la présence des deux utilisateurs
+        // pour éviter d'attendre une reconnexion avant de voir le statut.
+        notifyContactsOfStatus(username);
+        notifyContactsOfStatus(other);
         break;
       }
 
@@ -542,6 +546,20 @@ wss.on('connection', (ws, req) => {
 
         broadcastToUserSessions(other, (client) => {
           client.send(JSON.stringify({ type: 'friend-request-rejected', from: username }));
+        });
+        break;
+      }
+
+      case 'friend-cancel-notify': {
+        if (!username) {
+          ws.send(JSON.stringify({ type: 'auth-error', message: 'Non authentifié.' }));
+          break;
+        }
+        const other = (msg.target || msg.to || msg.username || msg.contact || '').toString().trim().toLowerCase();
+        if (!other) break;
+
+        broadcastToUserSessions(other, (client) => {
+          client.send(JSON.stringify({ type: 'friend-request-cancelled', from: username }));
         });
         break;
       }
