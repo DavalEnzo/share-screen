@@ -224,8 +224,19 @@ function sendFriendRequest(fromName, toName) {
   fromRecord.contacts = fromRecord.contacts || [];
   toRecord.contacts = toRecord.contacts || [];
 
-  if (fromRecord.contacts.includes(to) || toRecord.contacts.includes(from)) {
-    return { ok: false, error: 'Déjà en contacts.' };
+  const fromHasTo = fromRecord.contacts.includes(to);
+  const toHasFrom = toRecord.contacts.includes(from);
+
+  if (fromHasTo || toHasFrom) {
+    addContactPairInternal(from, to);
+
+    fromRecord.incomingRequests = (fromRecord.incomingRequests || []).filter(u => u !== to);
+    fromRecord.outgoingRequests = (fromRecord.outgoingRequests || []).filter(u => u !== to);
+    toRecord.incomingRequests = (toRecord.incomingRequests || []).filter(u => u !== from);
+    toRecord.outgoingRequests = (toRecord.outgoingRequests || []).filter(u => u !== from);
+
+    persistStore();
+    return { ok: true, autoAccepted: true };
   }
 
   fromRecord.incomingRequests = fromRecord.incomingRequests || [];

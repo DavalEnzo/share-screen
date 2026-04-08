@@ -803,6 +803,107 @@ function applyContactsListFromPayload(payload) {
   hydrateContactProfiles();
 }
 
+function markContactAsMutual(name) {
+  const key = String(name || '').trim().toLowerCase();
+  if (!key) return;
+
+  const existing = state.contacts.find((contact) => String(contact.name || '').toLowerCase() === key);
+  const contact = existing || {
+    name: key,
+    displayName: key,
+    avatarData: null,
+    isMutualContact: null,
+    online: false,
+    sharing: false,
+    roomCode: null,
+    host: null,
+    mode: 'local',
+  };
+
+  contact.name = key;
+  contact.isMutualContact = true;
+
+  const profileEntry = state.contactProfilesByName[key] || {};
+  state.contactProfilesByName[key] = {
+    ...profileEntry,
+    displayName: contact.displayName || profileEntry.displayName || key,
+    avatarData: contact.avatarData || profileEntry.avatarData || null,
+    isMutualContact: true,
+  };
+
+  const profile = state.contactProfilesByName[key];
+  if (profile) {
+    contact.displayName = profile.displayName || contact.displayName || key;
+    contact.avatarData = profile.avatarData || contact.avatarData || null;
+  }
+
+  const pendingStatus = state.pendingContactStatusByName[key];
+  if (pendingStatus) {
+    contact.online = Boolean(pendingStatus.online);
+    contact.sharing = Boolean(pendingStatus.sharing);
+    contact.roomCode = pendingStatus.roomCode || null;
+    contact.host = pendingStatus.host || null;
+    contact.mode = pendingStatus.mode === 'remote' ? 'remote' : 'local';
+    delete state.pendingContactStatusByName[key];
+  }
+
+  if (!existing) {
+    state.contacts = [...state.contacts, contact];
+  }
+
+  renderContactsList();
+}
+
+function markContactAsNonMutual(name) {
+  const key = String(name || '').trim().toLowerCase();
+  if (!key) return;
+
+  const existing = state.contacts.find((contact) => String(contact.name || '').toLowerCase() === key);
+  const contact = existing || {
+    name: key,
+    displayName: key,
+    avatarData: null,
+    isMutualContact: null,
+    online: false,
+    sharing: false,
+    roomCode: null,
+    host: null,
+    mode: 'local',
+  };
+
+  contact.name = key;
+  contact.isMutualContact = false;
+  contact.online = false;
+  contact.sharing = false;
+  contact.roomCode = null;
+  contact.host = null;
+  contact.mode = 'local';
+
+  const profileEntry = state.contactProfilesByName[key] || {};
+  state.contactProfilesByName[key] = {
+    ...profileEntry,
+    displayName: contact.displayName || profileEntry.displayName || key,
+    avatarData: contact.avatarData || profileEntry.avatarData || null,
+    isMutualContact: false,
+  };
+
+  if (!existing) {
+    state.contacts = [...state.contacts, contact];
+  }
+
+  renderContactsList();
+}
+
+function removeContactLocally(name) {
+  const key = String(name || '').trim().toLowerCase();
+  if (!key) return;
+
+  state.contacts = state.contacts.filter((contact) => String(contact.name || '').toLowerCase() !== key);
+  delete state.contactProfilesByName[key];
+  delete state.pendingContactStatusByName[key];
+  renderContactsList();
+}
+
 function getMutualContactState(name) {
   const key = String(name || '').toLowerCase();
   if (!key) return null;
@@ -892,7 +993,9 @@ async function hydrateContactProfiles() {
       map[username] = {
         displayName: profile.display_name || username,
         avatarData: profile.avatar_data || null,
-        isMutualContact: Boolean(profile.is_mutual_contact),
+        isMutualContact: typeof profile.is_mutual_contact === 'boolean'
+          ? profile.is_mutual_contact
+          : null,
       };
     });
     state.contactProfilesByName = map;
@@ -902,9 +1005,13 @@ async function hydrateContactProfiles() {
       if (!profile) return;
       contact.displayName = profile.display_name || contact.name;
       contact.avatarData = profile.avatar_data || null;
-      contact.isMutualContact = Boolean(profile.is_mutual_contact);
+      if (typeof profile.is_mutual_contact === 'boolean') {
+        if (profile.is_mutual_contact === true || contact.isMutualContact !== true) {
+          contact.isMutualContact = profile.is_mutual_contact;
+        }
+      }
 
-      if (!contact.isMutualContact) {
+      if (contact.isMutualContact === false) {
         contact.online = false;
         contact.sharing = false;
         contact.roomCode = null;
@@ -1332,7 +1439,9 @@ function openAuthWebSocket() {
     }
 
     if (msg.type === 'contacts-list') {
-      applyContactsListFromPayload(msg);
+      if (!state.authToken || !state.currentUser) {
+        applyContactsListFromPayload(msg);
+      }
       return;
     }
 
@@ -1353,8 +1462,9 @@ function openAuthWebSocket() {
         state.friendIncoming = state.friendIncoming.filter((u) => u !== from);
         state.friendOutgoing = state.friendOutgoing.filter((u) => u !== from);
         renderFriendRequests();
+        markContactAsMutual(from);
         notify(`${from} a accepté votre demande.`, 'success');
-        refreshUserProfileFromApi();
+        hydrateContactProfiles();
       }
       return;
     }
@@ -1382,8 +1492,8 @@ function openAuthWebSocket() {
     if (msg.type === 'contact-removed') {
       const from = (msg.from || '').toString().trim().toLowerCase();
       if (from) {
+        markContactAsNonMutual(from);
         refreshUserProfileFromApi();
-        notify(`${from} a supprimé le contact.`, 'info');
       }
       return;
     }
@@ -1650,12 +1760,20 @@ async function sendFriendRequestViaApi(name) {
     state.friendIncoming = Array.isArray(res.incoming) ? res.incoming : [];
     state.friendOutgoing = Array.isArray(res.outgoing) ? res.outgoing : [];
     renderFriendRequests();
-    notify(`Demande d'ami envoyée à ${name}.`, 'success');
+    if (res.auto_accepted) {
+      markContactAsMutual(name);
+    }
     await refreshUserProfileFromApi();
     if (state.authWs && state.authWs.readyState === WebSocket.OPEN && state.currentUser && state.currentUser.username) {
       try {
-        state.authWs.send(JSON.stringify({ type: 'friend-request-notify', to: name }));
+        const eventType = res.auto_accepted ? 'friend-accept-notify' : 'friend-request-notify';
+        state.authWs.send(JSON.stringify({ type: eventType, target: name, to: name }));
       } catch (_) {}
+    }
+    if (res.auto_accepted) {
+      notify(`${name} a été ajouté immédiatement.`, 'success');
+    } else {
+      notify(`Demande d'ami envoyée à ${name}.`, 'success');
     }
   } catch (err) {
     const msg = err && err.message ? err.message : 'Erreur lors de l\'envoi de la demande.';
