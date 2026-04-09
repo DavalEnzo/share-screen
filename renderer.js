@@ -43,6 +43,7 @@ const state = {
   contactProfilesByName: {},
   contactProfilesHydrating: false,
   contactProfilesHydrateQueued: false,
+  contactProfilesHydrateQueuedNeedsRender: false,
   lastContactProfilesHydrateAt: 0,
   pendingContactStatusByName: {},
   contacts: [],
@@ -56,12 +57,38 @@ const state = {
   receiverReconnectAttempts: 0,
   receiverReconnectTimer: null,
   receiverOfferTimeout: null,
+  receiverStatsInterval: null,
   receiverJoinCode: '',
   receiverJoinHost: 'localhost',
   hasChangelog: false,
   appVersion: '',
   lastChangelog: null,
 };
+
+const dateTimeFormatter = new Intl.DateTimeFormat('fr-FR', {
+  dateStyle: 'medium',
+  timeStyle: 'short',
+});
+
+let pageNodes = null;
+let navNodes = null;
+let notifStackNode = null;
+
+function ensureNavNodes() {
+  if (!pageNodes) pageNodes = Array.from(document.querySelectorAll('.page'));
+  if (!navNodes) navNodes = Array.from(document.querySelectorAll('.nav-item'));
+}
+
+function clearActivePill(containerSelector) {
+  const current = document.querySelector(`${containerSelector} .quality-pill.active`);
+  if (current) current.classList.remove('active');
+}
+
+function getNotifStackNode() {
+  if (notifStackNode && document.body.contains(notifStackNode)) return notifStackNode;
+  notifStackNode = document.getElementById('notifStack');
+  return notifStackNode;
+}
 
 function getUserApiBase() {
   if (state.userApiBase) return state.userApiBase;
@@ -332,8 +359,9 @@ function showPage(name) {
     notify('Connectez-vous pour modifier votre profil.', 'error');
     name = 'contacts';
   }
-  document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
-  document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
+  ensureNavNodes();
+  pageNodes.forEach(p => p.classList.remove('active'));
+  navNodes.forEach(n => n.classList.remove('active'));
   document.getElementById(`page-${name}`).classList.add('active');
   document.getElementById(`nav-${name}`).classList.add('active');
 }
@@ -416,10 +444,7 @@ function formatDateTime(value) {
   if (!value) return '—';
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return '—';
-  return new Intl.DateTimeFormat('fr-FR', {
-    dateStyle: 'medium',
-    timeStyle: 'short',
-  }).format(date);
+  return dateTimeFormatter.format(date);
 }
 
 function setAvatarPreview(imgEl, iconEl, avatarData) {
@@ -800,7 +825,7 @@ function applyContactsListFromPayload(payload) {
   }).filter(Boolean);
 
   renderContactsList();
-  hydrateContactProfiles();
+  hydrateContactProfiles({ skipRender: true });
 }
 
 function markContactAsMutual(name) {
@@ -918,7 +943,7 @@ function getMutualContactState(name) {
 
 function upsertContactFromStatus(payload) {
   const info = canonicalContact({ ...payload, user: payload.contact || payload.user || payload.name });
-  if (!info) return;
+  if (!info) return false;
 
   const mutualState = getMutualContactState(info.name);
 
@@ -927,14 +952,17 @@ function upsertContactFromStatus(payload) {
       c => String(c.name || '').toLowerCase() === info.name,
     );
     if (existingNonMutual) {
+      const changed = existingNonMutual.online || existingNonMutual.sharing || existingNonMutual.roomCode || existingNonMutual.host || existingNonMutual.mode !== 'local';
       existingNonMutual.online = false;
       existingNonMutual.sharing = false;
       existingNonMutual.roomCode = null;
       existingNonMutual.host = null;
       existingNonMutual.mode = 'local';
+      delete state.pendingContactStatusByName[info.name];
+      return changed;
     }
     delete state.pendingContactStatusByName[info.name];
-    return;
+    return false;
   }
 
   if (mutualState === null) {
@@ -945,7 +973,7 @@ function upsertContactFromStatus(payload) {
       host: info.host,
       mode: info.mode,
     };
-    return;
+    return false;
   }
 
   const existing = state.contacts.find(
@@ -959,25 +987,39 @@ function upsertContactFromStatus(payload) {
       host: info.host,
       mode: info.mode,
     };
-    return;
+    return false;
   }
+
+  const changed =
+    existing.online !== info.online ||
+    existing.sharing !== info.sharing ||
+    existing.roomCode !== info.roomCode ||
+    existing.host !== info.host ||
+    existing.mode !== info.mode;
+
+  if (!changed) return false;
 
   existing.online = info.online;
   existing.sharing = info.sharing;
   existing.roomCode = info.roomCode;
   existing.host = info.host;
   existing.mode = info.mode;
+
+  return true;
 }
 
-async function hydrateContactProfiles() {
+async function hydrateContactProfiles(options = {}) {
+  const skipRender = Boolean(options && options.skipRender);
   if (!state.authToken || !state.currentUser) return;
   if (state.contactProfilesHydrating) {
     state.contactProfilesHydrateQueued = true;
+    state.contactProfilesHydrateQueuedNeedsRender = state.contactProfilesHydrateQueuedNeedsRender || !skipRender;
     return;
   }
 
   state.contactProfilesHydrating = true;
   state.contactProfilesHydrateQueued = false;
+  state.contactProfilesHydrateQueuedNeedsRender = false;
 
   try {
     const res = await apiRequest('/api/contacts/profiles');
@@ -1033,16 +1075,20 @@ async function hydrateContactProfiles() {
       }
     });
 
-    renderContactsList();
-    renderFriendRequests();
+    if (!skipRender) {
+      renderContactsList();
+      renderFriendRequests();
+    }
   } catch (_) {
     // Non bloquant: la liste de contacts reste utilisable même sans avatars.
   } finally {
     state.contactProfilesHydrating = false;
     state.lastContactProfilesHydrateAt = Date.now();
     if (state.contactProfilesHydrateQueued) {
+      const nextNeedsRender = state.contactProfilesHydrateQueuedNeedsRender;
       state.contactProfilesHydrateQueued = false;
-      hydrateContactProfiles();
+      state.contactProfilesHydrateQueuedNeedsRender = false;
+      hydrateContactProfiles({ skipRender: !nextNeedsRender });
     }
   }
 }
@@ -1084,6 +1130,7 @@ function renderContactsList() {
   }
 
   const contacts = [...state.contacts].sort((a, b) => a.name.localeCompare(b.name));
+  const fragment = document.createDocumentFragment();
 
   contacts.forEach(contact => {
     const row = document.createElement('div');
@@ -1164,8 +1211,10 @@ function renderContactsList() {
 
     row.appendChild(main);
     row.appendChild(actions);
-    listEl.appendChild(row);
+    fragment.appendChild(row);
   });
+
+  listEl.appendChild(fragment);
 }
 
 function renderFriendRequests() {
@@ -1374,7 +1423,7 @@ async function refreshUserProfileFromApi() {
     };
     renderContactsList();
     renderFriendRequests();
-    await hydrateContactProfiles();
+    await hydrateContactProfiles({ skipRender: true });
     syncProfileFromCurrentUser();
     updateSidebarUserMenu();
   } catch (err) {
@@ -1433,8 +1482,9 @@ function openAuthWebSocket() {
     }
 
     if (msg.type === 'contact-status') {
-      upsertContactFromStatus(msg);
-      renderContactsList();
+      if (upsertContactFromStatus(msg)) {
+        renderContactsList();
+      }
       return;
     }
 
@@ -1450,7 +1500,7 @@ function openAuthWebSocket() {
       if (from && !state.friendIncoming.includes(from)) {
         state.friendIncoming = [...state.friendIncoming, from];
         renderFriendRequests();
-        hydrateContactProfiles();
+        hydrateContactProfiles({ skipRender: true });
         notify(`Nouvelle demande d'ami de ${from}.`, 'info');
       }
       return;
@@ -1464,7 +1514,7 @@ function openAuthWebSocket() {
         renderFriendRequests();
         markContactAsMutual(from);
         notify(`${from} a accepté votre demande.`, 'success');
-        hydrateContactProfiles();
+        hydrateContactProfiles({ skipRender: true });
       }
       return;
     }
@@ -1931,25 +1981,25 @@ function joinContactShare(contactName, roomCode, host, mode) {
 
 // ─── Quality selectors ────────────────────────────────────────────────────────
 function selectRes(el) {
-  document.querySelectorAll('#resPills .quality-pill').forEach(p => p.classList.remove('active'));
+  clearActivePill('#resPills');
   el.classList.add('active');
   state.resolution = parseInt(el.dataset.res);
 }
 
 function selectFps(el) {
-  document.querySelectorAll('#fpsPills .quality-pill').forEach(p => p.classList.remove('active'));
+  clearActivePill('#fpsPills');
   el.classList.add('active');
   state.fps = parseInt(el.dataset.fps);
 }
 
 function selectBitrate(el) {
-  document.querySelectorAll('#bitratePills .quality-pill').forEach(p => p.classList.remove('active'));
+  clearActivePill('#bitratePills');
   el.classList.add('active');
   state.bitrate = parseInt(el.dataset.bitrate);
 }
 
 function selectPreset(el) {
-  document.querySelectorAll('#presetPills .quality-pill').forEach(p => p.classList.remove('active'));
+  clearActivePill('#presetPills');
   el.classList.add('active');
 
   const res = parseInt(el.dataset.res || '0', 10);
@@ -2107,6 +2157,59 @@ async function getCaptureStream() {
 }
 
 // ─── Share ─────────────────────────────────────────────────────────────────────
+const broadcasterDom = {
+  startBtn: null,
+  stopBtn: null,
+  previewCard: null,
+  previewVideo: null,
+  statRes: null,
+  statFps: null,
+  statPeers: null,
+  showCursor: null,
+  lowLatencyMode: null,
+  connDot: null,
+  connStatus: null,
+  titleStatusText: null,
+};
+
+function getBroadcasterDomRef(key, id) {
+  const node = broadcasterDom[key];
+  if (node && document.body.contains(node)) return node;
+  const next = document.getElementById(id);
+  broadcasterDom[key] = next || null;
+  return next;
+}
+
+function getBroadcasterDom() {
+  return {
+    startBtn: getBroadcasterDomRef('startBtn', 'startBtn'),
+    stopBtn: getBroadcasterDomRef('stopBtn', 'stopBtn'),
+    previewCard: getBroadcasterDomRef('previewCard', 'previewCard'),
+    previewVideo: getBroadcasterDomRef('previewVideo', 'previewVideo'),
+    statRes: getBroadcasterDomRef('statRes', 'statRes'),
+    statFps: getBroadcasterDomRef('statFps', 'statFps'),
+    statPeers: getBroadcasterDomRef('statPeers', 'statPeers'),
+    showCursor: getBroadcasterDomRef('showCursor', 'showCursor'),
+    lowLatencyMode: getBroadcasterDomRef('lowLatencyMode', 'lowLatencyMode'),
+    connDot: getBroadcasterDomRef('connDot', 'connDot'),
+    connStatus: getBroadcasterDomRef('connStatus', 'connStatus'),
+    titleStatusText: getBroadcasterDomRef('titleStatusText', 'titleStatusText'),
+  };
+}
+
+function setBroadcasterPeerCount(value) {
+  const { statPeers } = getBroadcasterDom();
+  if (statPeers) statPeers.textContent = String(value);
+}
+
+function setSharingUi(isSharing) {
+  const { startBtn, stopBtn, previewCard, previewVideo } = getBroadcasterDom();
+  if (startBtn) startBtn.style.display = isSharing ? 'none' : '';
+  if (stopBtn) stopBtn.style.display = isSharing ? '' : 'none';
+  if (previewCard) previewCard.style.display = isSharing ? '' : 'none';
+  if (!isSharing && previewVideo) previewVideo.srcObject = null;
+}
+
 async function startSharing() {
   try {
     updateTitle('Démarrage...');
@@ -2125,24 +2228,23 @@ async function startSharing() {
       }).catch(() => {}); // Ignore if not supported
 
       // Renforcer la contrainte de curseur au niveau de la piste
-      const showCursor = document.getElementById('showCursor').checked;
+      const { showCursor: showCursorEl } = getBroadcasterDom();
+      const showCursor = Boolean(showCursorEl?.checked);
       await videoTrack.applyConstraints({ cursor: showCursor ? 'always' : 'never' }).catch(() => {});
     }
 
     // Show preview
-    const preview = document.getElementById('previewVideo');
-    preview.srcObject = state.localStream;
+    const { previewVideo, statRes, statFps } = getBroadcasterDom();
+    if (previewVideo) previewVideo.srcObject = state.localStream;
 
     // Connect to signaling
     connectSignaling('broadcaster');
 
     // Update UI
     state.isSharing = true;
-    document.getElementById('startBtn').style.display = 'none';
-    document.getElementById('stopBtn').style.display = '';
-    document.getElementById('previewCard').style.display = '';
-    document.getElementById('statRes').textContent = `${state.resolution}p`;
-    document.getElementById('statFps').textContent = state.fps;
+    setSharingUi(true);
+    if (statRes) statRes.textContent = `${state.resolution}p`;
+    if (statFps) statFps.textContent = String(state.fps);
 
     // Handle stream end
     if (videoTrack) {
@@ -2188,11 +2290,8 @@ function stopSharing() {
   state.isSharing = false;
   state.peerCount = 0;
 
-  document.getElementById('startBtn').style.display = '';
-  document.getElementById('stopBtn').style.display = 'none';
-  document.getElementById('previewCard').style.display = 'none';
-  document.getElementById('previewVideo').srcObject = null;
-  document.getElementById('statPeers').textContent = '0';
+  setSharingUi(false);
+  setBroadcasterPeerCount(0);
 
   updateStatus('Pas en partage', 'off');
   updateTitle('Prêt');
@@ -2230,7 +2329,7 @@ function openBroadcasterSignaling(role, isReconnect) {
       state.peerConnections.forEach(pc => pc.close());
       state.peerConnections.clear();
       state.peerCount = 0;
-      document.getElementById('statPeers').textContent = '0';
+      setBroadcasterPeerCount(0);
       notify('Signalisation rétablie. Les spectateurs peuvent se reconnecter.', 'success');
     }
 
@@ -2286,7 +2385,7 @@ function openBroadcasterSignaling(role, isReconnect) {
 
     if (msg.type === 'peer-left') {
       state.peerCount = Math.max(0, state.peerCount - 1);
-      document.getElementById('statPeers').textContent = state.peerCount;
+      setBroadcasterPeerCount(state.peerCount);
     }
   };
 
@@ -2358,7 +2457,8 @@ async function createBroadcasterPeer(peerId) {
   }
 
   // Set encoding parameters for quality
-  const lowLatencyMode = Boolean(document.getElementById('lowLatencyMode')?.checked);
+  const { lowLatencyMode: lowLatencyModeEl } = getBroadcasterDom();
+  const lowLatencyMode = Boolean(lowLatencyModeEl?.checked);
   pc.getSenders().forEach(sender => {
     if (sender.track && sender.track.kind === 'video') {
       const params = sender.getParameters();
@@ -2379,7 +2479,7 @@ async function createBroadcasterPeer(peerId) {
   pc.onconnectionstatechange = () => {
     if (pc.connectionState === 'connected') {
       state.peerCount++;
-      document.getElementById('statPeers').textContent = state.peerCount;
+      setBroadcasterPeerCount(state.peerCount);
       notify('Un spectateur a rejoint la session !', 'success');
     }
     if (['disconnected', 'failed', 'closed'].includes(pc.connectionState)) {
@@ -2396,9 +2496,56 @@ async function createBroadcasterPeer(peerId) {
 }
 
 // ─── Receive ──────────────────────────────────────────────────────────────────
+const receiverDom = {
+  joinCodeInput: null,
+  joinHostInput: null,
+  joinBtn: null,
+  remoteVideo: null,
+  remoteCard: null,
+  receiveStatus: null,
+};
+
+function getReceiverDomRef(key, id) {
+  const node = receiverDom[key];
+  if (node && document.body.contains(node)) return node;
+  const next = document.getElementById(id);
+  receiverDom[key] = next || null;
+  return next;
+}
+
+function getReceiverDom() {
+  return {
+    joinCodeInput: getReceiverDomRef('joinCodeInput', 'joinCodeInput'),
+    joinHostInput: getReceiverDomRef('joinHostInput', 'joinHostInput'),
+    joinBtn: getReceiverDomRef('joinBtn', 'joinBtn'),
+    remoteVideo: getReceiverDomRef('remoteVideo', 'remoteVideo'),
+    remoteCard: getReceiverDomRef('remoteCard', 'remoteCard'),
+    receiveStatus: getReceiverDomRef('receiveStatus', 'receiveStatus'),
+  };
+}
+
+function setReceiverJoinButton(disabled, label) {
+  const { joinBtn } = getReceiverDom();
+  if (!joinBtn) return;
+  joinBtn.disabled = disabled;
+  joinBtn.textContent = label;
+}
+
+function hideRemoteCardAndClearVideo() {
+  const { remoteVideo, remoteCard } = getReceiverDom();
+  if (remoteVideo) remoteVideo.srcObject = null;
+  if (remoteCard) remoteCard.style.display = 'none';
+}
+
+function showRemoteCard() {
+  const { remoteCard } = getReceiverDom();
+  if (remoteCard) remoteCard.style.display = '';
+}
+
 async function joinSession() {
-  const code = document.getElementById('joinCodeInput').value.trim();
-  const host = document.getElementById('joinHostInput').value.trim() || 'localhost';
+  const { joinCodeInput, joinHostInput } = getReceiverDom();
+  const code = joinCodeInput ? joinCodeInput.value.trim() : '';
+  const host = (joinHostInput ? joinHostInput.value.trim() : '') || 'localhost';
 
   if (!code) { notify('Entrez un code de session.', 'error'); return; }
 
@@ -2411,8 +2558,7 @@ async function joinSession() {
   state.receiverShouldReconnect = true;
   state.receiverReconnectAttempts = 0;
 
-  document.getElementById('joinBtn').disabled = true;
-  document.getElementById('joinBtn').textContent = 'Connexion...';
+  setReceiverJoinButton(true, 'Connexion...');
 
   updateReceiveStatus('connecting');
 
@@ -2427,6 +2573,13 @@ function clearReceiverTimers() {
   if (state.receiverOfferTimeout) {
     clearTimeout(state.receiverOfferTimeout);
     state.receiverOfferTimeout = null;
+  }
+}
+
+function clearReceiverStatsInterval() {
+  if (state.receiverStatsInterval) {
+    clearInterval(state.receiverStatsInterval);
+    state.receiverStatsInterval = null;
   }
 }
 
@@ -2462,8 +2615,7 @@ function connectReceiverSignaling(isReconnect) {
 
   state.receiverWs.onopen = () => {
     if (!state.receiverShouldReconnect) return;
-    document.getElementById('joinBtn').disabled = true;
-    document.getElementById('joinBtn').textContent = isReconnect ? 'Reconnexion...' : 'Connexion...';
+    setReceiverJoinButton(true, isReconnect ? 'Reconnexion...' : 'Connexion...');
     if (state.currentUser && state.currentUser.username) {
       try {
         state.receiverWs.send(JSON.stringify({ type: 'attach-user', username: state.currentUser.username }));
@@ -2543,14 +2695,12 @@ function scheduleReceiverReconnect() {
     state.receiverPc = null;
   }
   state.receiverTargetId = null;
+  clearReceiverStatsInterval();
 
-  const video = document.getElementById('remoteVideo');
-  video.srcObject = null;
-  document.getElementById('remoteCard').style.display = 'none';
+  hideRemoteCardAndClearVideo();
   updateReceiveStatus('connecting');
 
-  document.getElementById('joinBtn').disabled = true;
-  document.getElementById('joinBtn').textContent = `Reconnexion ${attempt}/${maxAttempts}...`;
+  setReceiverJoinButton(true, `Reconnexion ${attempt}/${maxAttempts}...`);
 
   state.receiverReconnectTimer = setTimeout(() => {
     state.receiverReconnectTimer = null;
@@ -2572,12 +2722,14 @@ async function handleReceiverOffer(offer) {
   state.receiverPc = new RTCPeerConnection(iceConfig);
 
   state.receiverPc.ontrack = (event) => {
-    const video = document.getElementById('remoteVideo');
-    if (!video.srcObject) video.srcObject = event.streams[0];
-    video.play().catch(() => {});
+    const { remoteVideo } = getReceiverDom();
+    if (remoteVideo) {
+      if (!remoteVideo.srcObject) remoteVideo.srcObject = event.streams[0];
+      remoteVideo.play().catch(() => {});
+    }
 
     // Show remote card
-    document.getElementById('remoteCard').style.display = '';
+    showRemoteCard();
 
     // Start measuring
     startRecvStats(event.streams[0]);
@@ -2593,7 +2745,7 @@ async function handleReceiverOffer(offer) {
     if (state.receiverPc.connectionState === 'connected') {
       state.receiverReconnectAttempts = 0;
       updateReceiveStatus('connected');
-      document.getElementById('joinBtn').textContent = '✓ Connecté';
+      setReceiverJoinButton(true, '✓ Connecté');
       notify('Flux reçu avec succès !', 'success');
     }
     if (['disconnected', 'failed', 'closed'].includes(state.receiverPc.connectionState)) {
@@ -2640,17 +2792,15 @@ function leaveSession() {
   state.receiverTargetId = null;
   state.receiverJoinCode = '';
   state.receiverJoinHost = 'localhost';
+  clearReceiverStatsInterval();
 
   if (document.body.classList.contains('remote-fullscreen')) {
     setRemoteFullscreen(false);
   }
 
-  const video = document.getElementById('remoteVideo');
-  video.srcObject = null;
-  document.getElementById('remoteCard').style.display = 'none';
+  hideRemoteCardAndClearVideo();
 
-  document.getElementById('joinBtn').disabled = false;
-  document.getElementById('joinBtn').textContent = '📥 Rejoindre la session';
+  setReceiverJoinButton(false, '📥 Rejoindre la session');
   updateReceiveStatus('idle');
 }
 
@@ -2682,29 +2832,36 @@ function toggleFullscreen() {
 
 // ─── Stats (receiver) ─────────────────────────────────────────────────────────
 function startRecvStats(stream) {
-  const video = document.getElementById('remoteVideo');
-  let lastTime = Date.now();
+  const { remoteVideo } = getReceiverDom();
+  const video = remoteVideo;
+  if (!video) return;
+  const recvResEl = document.getElementById('recvRes');
+  const recvFpsEl = document.getElementById('recvFps');
+  const recvLatencyEl = document.getElementById('recvLatency');
 
-  const interval = setInterval(() => {
-    if (!stream.active) { clearInterval(interval); return; }
+  clearReceiverStatsInterval();
+
+  state.receiverStatsInterval = setInterval(() => {
+    if (!stream.active) {
+      clearReceiverStatsInterval();
+      return;
+    }
 
     const w = video.videoWidth;
     const h = video.videoHeight;
-    if (w && h) {
-      document.getElementById('recvRes').textContent = `${w}×${h}`;
-    }
+    if (w && h && recvResEl) recvResEl.textContent = `${w}×${h}`;
 
     // Rough FPS from WebRTC stats
     if (state.receiverPc) {
       state.receiverPc.getStats().then(stats => {
         stats.forEach(report => {
           if (report.type === 'inbound-rtp' && report.mediaType === 'video') {
-            document.getElementById('recvFps').textContent = Math.round(report.framesPerSecond || 0);
+            if (recvFpsEl) recvFpsEl.textContent = Math.round(report.framesPerSecond || 0);
           }
           if (report.type === 'candidate-pair' && report.nominated) {
             const rtt = report.currentRoundTripTime;
             if (rtt !== undefined) {
-              document.getElementById('recvLatency').textContent = `${Math.round(rtt * 1000)}ms`;
+              if (recvLatencyEl) recvLatencyEl.textContent = `${Math.round(rtt * 1000)}ms`;
             }
           }
         });
@@ -2715,8 +2872,8 @@ function startRecvStats(stream) {
 
 // ─── UI helpers ───────────────────────────────────────────────────────────────
 function updateStatus(text, type) {
-  const dot = document.getElementById('connDot');
-  const label = document.getElementById('connStatus');
+  const { connDot: dot, connStatus: label } = getBroadcasterDom();
+  if (!dot || !label) return;
   label.textContent = text;
   dot.className = 'status-dot';
   if (type === 'green') { dot.classList.add('green'); dot.classList.add('pulse'); }
@@ -2724,11 +2881,14 @@ function updateStatus(text, type) {
 }
 
 function updateTitle(text) {
-  document.getElementById('titleStatusText').textContent = text;
+  const { titleStatusText } = getBroadcasterDom();
+  if (titleStatusText) titleStatusText.textContent = text;
 }
 
 function updateReceiveStatus(status) {
-  const el = document.getElementById('receiveStatus');
+  const { receiveStatus, joinCodeInput } = getReceiverDom();
+  const el = receiveStatus;
+  if (!el) return;
   if (status === 'connecting') {
     el.innerHTML = `
       <div style="text-align:center; padding:16px 0">
@@ -2741,7 +2901,7 @@ function updateReceiveStatus(status) {
   } else if (status === 'connected') {
     el.innerHTML = `
       <div class="info-row"><span class="info-key">État</span><span class="info-val" style="color:var(--green)">✓ Connecté</span></div>
-      <div class="info-row"><span class="info-key">Code</span><span class="info-val accent">${document.getElementById('joinCodeInput').value.trim()}</span></div>
+      <div class="info-row"><span class="info-key">Code</span><span class="info-val accent">${joinCodeInput ? joinCodeInput.value.trim() : ''}</span></div>
     `;
   } else {
     el.innerHTML = `
@@ -2755,7 +2915,8 @@ function updateReceiveStatus(status) {
 
 // ─── Notifications ────────────────────────────────────────────────────────────
 function notify(message, type = 'info') {
-  const stack = document.getElementById('notifStack');
+  const stack = getNotifStackNode();
+  if (!stack) return;
   const div = document.createElement('div');
   div.className = `notif ${type === 'error' ? 'error' : type === 'success' ? 'success' : ''}`;
   div.textContent = message;
@@ -2841,17 +3002,21 @@ function setupUiBindings() {
     event.target.value = event.target.value.toUpperCase();
   });
 
-  document.querySelectorAll('#resPills .quality-pill').forEach(el => {
-    el.addEventListener('click', () => selectRes(el));
+  document.getElementById('resPills')?.addEventListener('click', (event) => {
+    const pill = event.target.closest('.quality-pill');
+    if (pill) selectRes(pill);
   });
-  document.querySelectorAll('#fpsPills .quality-pill').forEach(el => {
-    el.addEventListener('click', () => selectFps(el));
+  document.getElementById('fpsPills')?.addEventListener('click', (event) => {
+    const pill = event.target.closest('.quality-pill');
+    if (pill) selectFps(pill);
   });
-  document.querySelectorAll('#bitratePills .quality-pill').forEach(el => {
-    el.addEventListener('click', () => selectBitrate(el));
+  document.getElementById('bitratePills')?.addEventListener('click', (event) => {
+    const pill = event.target.closest('.quality-pill');
+    if (pill) selectBitrate(pill);
   });
-  document.querySelectorAll('#presetPills .quality-pill').forEach(el => {
-    el.addEventListener('click', () => selectPreset(el));
+  document.getElementById('presetPills')?.addEventListener('click', (event) => {
+    const pill = event.target.closest('.quality-pill');
+    if (pill) selectPreset(pill);
   });
 
   document.getElementById('changelogModalCloseBtn')?.addEventListener('click', () => {
