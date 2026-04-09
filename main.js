@@ -1,7 +1,34 @@
 require('dotenv').config();
 const { app, BrowserWindow, ipcMain, desktopCapturer, screen, session, clipboard } = require('electron');
 const { autoUpdater } = require('electron-updater');
+const path = require('path');
+const fs = require('fs');
 const DEFAULT_REMOTE_SIGNALING_URL = 'wss://share-screen-production.up.railway.app';
+
+// Utiliser des dossiers persistants explicites pour éviter les erreurs d'accès
+// au cache Chromium sur Windows (ex: 0x5 Access denied).
+const USER_DATA_DIR = path.join(app.getPath('appData'), 'Lunia');
+const CACHE_DIR = path.join(USER_DATA_DIR, 'Cache');
+const GPU_CACHE_DIR = path.join(USER_DATA_DIR, 'GPUCache');
+
+try {
+  fs.mkdirSync(USER_DATA_DIR, { recursive: true });
+  fs.mkdirSync(CACHE_DIR, { recursive: true });
+  fs.mkdirSync(GPU_CACHE_DIR, { recursive: true });
+} catch (err) {
+  console.warn('[startup] Impossible de préparer les dossiers cache:', err && err.message ? err.message : err);
+}
+
+app.setPath('userData', USER_DATA_DIR);
+app.commandLine.appendSwitch('disk-cache-dir', CACHE_DIR);
+app.commandLine.appendSwitch('gpu-shader-disk-cache-dir', GPU_CACHE_DIR);
+
+// Empêche les conflits de cache/fichiers verrouillés si une seconde instance est lancée.
+const gotSingleInstanceLock = app.requestSingleInstanceLock();
+if (!gotSingleInstanceLock) {
+  app.quit();
+  process.exit(0);
+}
 
 // Réduire l'influence de la vsync et du throttling de fond sur le partage.
 // Attention : ça ne désactive pas G-SYNC/FreeSync au niveau du driver,
@@ -11,7 +38,6 @@ app.commandLine.appendSwitch('disable-frame-rate-limit');
 app.commandLine.appendSwitch('disable-background-timer-throttling');
 app.commandLine.appendSwitch('disable-renderer-backgrounding');
 app.commandLine.appendSwitch('disable-backgrounding-occluded-windows');
-const path = require('path');
 const http = require('http');
 const { Server } = require('ws');
 const authStore = require('./authStore');
@@ -20,6 +46,12 @@ let mainWindow;
 let signalingServer;
 let wss;
 const PORT = 8765;
+
+app.on('second-instance', () => {
+  if (!mainWindow) return;
+  if (mainWindow.isMinimized()) mainWindow.restore();
+  mainWindow.focus();
+});
 
 function createWindow() {
   mainWindow = new BrowserWindow({
